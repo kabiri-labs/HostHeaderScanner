@@ -223,7 +223,7 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 For support or inquiries:
 
-- **Email**: [ad.kabiri@gmail.com](mailto:ad.kabiri@gmail.com)
+- **Email**: [certification.kabiri@gmail.com](mailto:certification.kabiri@gmail.com)
 - **GitHub Issues**: [Create an Issue](https://github.com/inpentest/HostHeaderScanner/issues)
 
 Feel free to open an issue or pull request for any bugs, feature requests, or questions.
