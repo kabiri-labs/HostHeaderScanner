@@ -2,19 +2,20 @@ import argparse
 import sys
 import time
 from datetime import datetime
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlencode, parse_qs
 import requests
 from tqdm import tqdm
 from multiprocessing.dummy import Pool as ThreadPool
 import json
 import statistics
 from colorama import init, Fore, Style
+import re
 
 init(autoreset=True)
 
 # Program metadata
 __tool_name__ = "HostHeaderScanner"
-__version__ = "1.0"
+__version__ = "1.1"
 __github_url__ = "https://github.com/inpentest/HostHeaderScanner"
 
 class BaseTest:
@@ -22,7 +23,7 @@ class BaseTest:
         self.target_url = target_url
         self.original_host = original_host
         self.oob_domain = oob_domain
-        self.methods = methods or ['GET', 'POST', 'PUT', 'DELETE']
+        self.methods = methods or ['GET', 'POST']
         self.session = requests.Session()
         self.session.verify = False
         requests.packages.urllib3.disable_warnings()
@@ -43,25 +44,26 @@ class SSRFTest(BaseTest):
     def generate_payloads(self):
         internal_hosts = [
             'localhost', '127.0.0.1', '169.254.169.254',
-            'metadata.google.internal', '10.0.0.1', '192.168.1.1',
-            '172.16.0.1', 'phpmyadmin', 'api', 'mysql', 'www', 'nginx', 'php',
+            'metadata.google.internal', '192.168.1.1',
+             'phpmyadmin', 'test'
         ]
-        common_ports = [80, 81, 8080, 3306]
+        common_ports = [80, 443]
         payloads = internal_hosts + [f"{host}:{port}" for host in internal_hosts for port in common_ports]
+        if self.oob_domain:
+            payloads.append(self.oob_domain)
         return payloads
 
     def run(self):
         payloads = self.generate_payloads()
-        positions = [
-            lambda p: p,
-            lambda p: f"{self.original_host}&{p}",
-            lambda p: f"{p}&{self.original_host}",
+        headers_to_test = [
+            'Host', 'X-Forwarded-For', 'X-Forwarded-Host',
+            'X-Real-IP', 'Forwarded'
         ]
         test_cases = [
-            (method, {'Host': position(payload)}, payload)
+            (method, {header_name: payload}, payload, header_name)
             for method in self.methods
             for payload in payloads
-            for position in positions
+            for header_name in headers_to_test
         ]
         total_tests = len(test_cases)
         print("\nStarting SSRF Tests...")
@@ -84,7 +86,7 @@ class SSRFTest(BaseTest):
     def perform_request_wrapper(self, args):
         self.perform_request(*args)
 
-    def perform_request(self, method, headers, payload):
+    def perform_request(self, method, headers, payload, header_name):
         common_headers = {
             'User-Agent': f'Mozilla/5.0 (compatible; {__tool_name__}/{__version__})',
             'Accept': '*/*',
@@ -103,9 +105,10 @@ class SSRFTest(BaseTest):
                 'url': response.url,
                 'method': method,
                 'headers': headers,
+                'header_name': header_name,
                 'status_code': response.status_code,
                 'response_time': response_time,
-                'response_body': response.text[:500],
+                'response_body': response.text[:1000],
                 'payload': payload
             })
         except requests.RequestException:
@@ -118,80 +121,100 @@ class SSRFTest(BaseTest):
         mean_time = statistics.mean(self.response_times)
         stdev_time = statistics.stdev(self.response_times)
         threshold = 4
+        known_indicators = [
+            'internal', 'localhost', 'phpmyadmin', 'database error',
+            'root:x:', '127.0.0.1', 'server at', 'nginx', 'apache', 'sql syntax', 'fatal error'
+        ]
         for result in self.results:
             response_time = result['response_time']
             z_score = (response_time - mean_time) / stdev_time if stdev_time > 0 else 0
+            analysis = ''
+            is_vulnerable = False
+
             if abs(z_score) >= threshold:
-                test_result = 'Potentially Vulnerable'
-                analysis = (
+                analysis += (
                     f"Response time ({response_time:.2f}s) is {abs(z_score):.2f} standard deviations "
-                    f"{'faster' if z_score < 0 else 'slower'} than the mean ({mean_time:.2f}s)."
+                    f"{'faster' if z_score < 0 else 'slower'} than the mean ({mean_time:.2f}s). "
                 )
-                lower_text = result['response_body'].lower()
-                if any(keyword in lower_text for keyword in ['internal', 'localhost', 'phpmyadmin', 'database error']):
-                    analysis += " Response body contains indicators of internal server access."
+                is_vulnerable = True
+
+            lower_text = result['response_body'].lower()
+            for indicator in known_indicators:
+                if indicator in lower_text:
+                    analysis += f"Response contains indicator: '{indicator}'. "
+                    is_vulnerable = True
+
+            if is_vulnerable:
+                test_result = 'Potentially Vulnerable'
                 self.vulnerabilities_found.append({
                     'test_type': 'SSRF',
                     'url': result['url'],
                     'method': result['method'],
                     'headers': result['headers'],
+                    'header_name': result['header_name'],
+                    'payload': result['payload'],  # Include the payload here
                     'status_code': result['status_code'],
                     'response_time': response_time,
                     'analysis': analysis,
                     'test_result': test_result
                 })
-                print(Fore.RED + Style.BRIGHT + "\n[!] SSRF Potential Vulnerability Detected!")
-                print(f"URL: {result['url']}")
-                print(f"Method: {result['method']}")
-                print(f"Headers: {result['headers']}")
-                print(f"Status Code: {result['status_code']}")
-                print(f"Response Time: {response_time:.2f}s")
-                print(Fore.YELLOW + f"Analysis: {analysis}")
-                print(Fore.RED + "-" * 80)
+                if self.verbose >= 1:
+                    print(Fore.RED + Style.BRIGHT + "\n[!] SSRF Potential Vulnerability Detected!")
+                    print(f"URL: {result['url']}")
+                    print(f"Method: {result['method']}")
+                    print(f"Header: {result['header_name']}")
+                    print(f"Payload: {result['payload']}")
+                    print(f"Status Code: {result['status_code']}")
+                    print(f"Response Time: {response_time:.2f}s")
+                    print(Fore.YELLOW + f"Analysis: {analysis}")
+                    print(Fore.RED + "-" * 80)
             elif self.verbose == 2:
                 self.all_results.append({
                     'test_type': 'SSRF',
                     'url': result['url'],
                     'method': result['method'],
                     'headers': result['headers'],
+                    'header_name': result['header_name'],
                     'status_code': result['status_code'],
                     'response_time': response_time,
-                    'analysis': f"Response time ({response_time:.2f}s) is within normal range.",
+                    'analysis': "No significant anomalies detected.",
                     'test_result': 'Not Vulnerable'
                 })
 
-class OpenRedirectTest(BaseTest):
+class URLParameterTest(BaseTest):
     def generate_payloads(self):
-        payloads = ['example.com', 'example.net:443']
+        payloads = []
+        internal_urls = [
+            'http://localhost', 'http://127.0.0.1', 'http://169.254.169.254',
+            'http://metadata.google.internal', 'http://10.0.0.1', 'http://192.168.1.1',
+            'http://172.16.0.1', 'file:///etc/passwd'
+        ]
         if self.oob_domain:
-            payloads.append(self.oob_domain)
+            internal_urls.append(f'http://{self.oob_domain}')
+        payloads.extend(internal_urls)
         return payloads
 
     def run(self):
         payloads = self.generate_payloads()
-        positions = [
-            lambda p: p,
-            lambda p: f"{p}&{self.original_host}",
-            lambda p: f"{self.original_host}&{p}",
-        ]
+        params_to_test = ['url', 'next', 'redirect', 'dest', 'destination', 'uri', 'path']
         test_cases = [
-            (method, {'Host': position(payload)}, payload)
+            (method, payload, param_name)
             for method in self.methods
             for payload in payloads
-            for position in positions
+            for param_name in params_to_test
         ]
         total_tests = len(test_cases)
-        print("\nStarting Open Redirect Tests...")
+        print("\nStarting URL Parameter SSRF Tests...")
 
         try:
-            with tqdm(total=total_tests, desc="Open Redirect Testing", unit="test") as pbar:
+            with tqdm(total=total_tests, desc="URL Parameter Testing", unit="test") as pbar:
                 pool = ThreadPool(self.threads)
                 for _ in pool.imap_unordered(self.perform_request_wrapper, test_cases):
                     pbar.update(1)
                 pool.close()
                 pool.join()
         except KeyboardInterrupt:
-            print(Fore.YELLOW + "\n[!] Open Redirect Testing interrupted by user.")
+            print(Fore.YELLOW + "\n[!] URL Parameter Testing interrupted by user.")
             pool.terminate()
             pool.join()
             sys.exit(0)
@@ -199,79 +222,74 @@ class OpenRedirectTest(BaseTest):
     def perform_request_wrapper(self, args):
         self.perform_request(*args)
 
-    def perform_request(self, method, headers, payload):
+    def perform_request(self, method, payload, param_name):
         common_headers = {
             'User-Agent': f'Mozilla/5.0 (compatible; {__tool_name__}/{__version__})',
             'Accept': '*/*',
             'Accept-Language': 'en-US,en;q=0.9',
             'Connection': 'keep-alive',
         }
-        request_headers = {**common_headers, **headers}
+        parsed_url = urlparse(self.target_url)
+        query_params = parse_qs(parsed_url.query)
+        query_params[param_name] = payload
+        new_query = urlencode(query_params, doseq=True)
+        url_with_payload = parsed_url._replace(query=new_query).geturl()
+
         try:
             start_time = time.time()
             response = self.session.request(
-                method, self.target_url, headers=request_headers, timeout=5, allow_redirects=False
+                method, url_with_payload, headers=common_headers, timeout=5, allow_redirects=True
             )
             response_time = time.time() - start_time
-            self.analyze_response(response, headers, method, response_time, payload)
+            analysis = self.analyze_response(response, payload)
+            if analysis:
+                self.vulnerabilities_found.append({
+                    'test_type': 'URL Parameter SSRF',
+                    'url': response.url,
+                    'method': method,
+                    'param_name': param_name,
+                    'payload': payload,
+                    'status_code': response.status_code,
+                    'response_time': response_time,
+                    'analysis': analysis,
+                    'test_result': 'Potentially Vulnerable'
+                })
+                if self.verbose >= 1:
+                    print(Fore.RED + Style.BRIGHT + "\n[!] URL Parameter SSRF Potential Vulnerability Detected!")
+                    print(f"URL: {response.url}")
+                    print(f"Method: {method}")
+                    print(f"Parameter: {param_name}")
+                    print(f"Payload: {payload}")
+                    print(f"Status Code: {response.status_code}")
+                    print(f"Response Time: {response_time:.2f}s")
+                    print(Fore.YELLOW + f"Analysis: {analysis}")
+                    print(Fore.RED + "-" * 80)
+            elif self.verbose == 2:
+                self.all_results.append({
+                    'test_type': 'URL Parameter SSRF',
+                    'url': response.url,
+                    'method': method,
+                    'param_name': param_name,
+                    'payload': payload,
+                    'status_code': response.status_code,
+                    'response_time': response_time,
+                    'analysis': "No significant anomalies detected.",
+                    'test_result': 'Not Vulnerable'
+                })
         except requests.RequestException:
             pass
 
-    def analyze_response(self, response, headers, method, response_time, payload):
-        status_code = response.status_code
-        if status_code in [301, 302, 303, 307, 308]:
-            location = response.headers.get('Location', '')
-            if not location:
-                return
-            redirect_url = urljoin(self.target_url, location)
-            redirect_parsed = urlparse(redirect_url)
-            redirect_host = redirect_parsed.hostname
-            redirect_port = redirect_parsed.port
-            payload_parsed = urlparse('//' + payload)
-            payload_host = payload_parsed.hostname
-            payload_port = payload_parsed.port or (443 if redirect_parsed.scheme == 'https' else 80)
-            if redirect_host == payload_host and (redirect_port == payload_port or redirect_port is None):
-                analysis = f"Redirected to {redirect_url} which matches the payload."
-                self.vulnerabilities_found.append({
-                    'test_type': 'Open Redirect',
-                    'url': response.url,
-                    'method': method,
-                    'headers': headers,
-                    'status_code': status_code,
-                    'response_time': response_time,
-                    'analysis': analysis,
-                    'test_result': 'Vulnerable'
-                })
-                print(Fore.RED + Style.BRIGHT + "\n[!] Open Redirect Vulnerability Detected!")
-                print(f"URL: {response.url}")
-                print(f"Method: {method}")
-                print(f"Headers: {headers}")
-                print(f"Status Code: {status_code}")
-                print(f"Response Time: {response_time:.2f}s")
-                print(Fore.YELLOW + f"Analysis: {analysis}")
-                print(Fore.RED + "-" * 80)
-            elif self.verbose == 2:
-                self.all_results.append({
-                    'test_type': 'Open Redirect',
-                    'url': response.url,
-                    'method': method,
-                    'headers': headers,
-                    'status_code': status_code,
-                    'response_time': response_time,
-                    'analysis': f"Redirected to {redirect_url}, does not match payload.",
-                    'test_result': 'Not Vulnerable'
-                })
-        elif self.verbose == 2:
-            self.all_results.append({
-                'test_type': 'Open Redirect',
-                'url': response.url,
-                'method': method,
-                'headers': headers,
-                'status_code': status_code,
-                'response_time': response_time,
-                'analysis': "No redirection occurred.",
-                'test_result': 'Not Vulnerable'
-            })
+    def analyze_response(self, response, payload):
+        known_indicators = [
+            'root:x:', 'localhost', '127.0.0.1', 'metadata',
+            'EC2', 'cloud', 'sql syntax', 'database error', 'exception', 'file not found'
+        ]
+        lower_text = response.text.lower()
+        analysis = ''
+        for indicator in known_indicators:
+            if indicator in lower_text:
+                analysis += f"Response contains indicator: '{indicator}'. "
+        return analysis if analysis else None
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Host Header Injection Testing Tool')
@@ -285,12 +303,12 @@ def parse_arguments():
         parser.error("The --threads argument must be between 1 and 20.")
     return args
 
-def save_results(output_file, ssrf_test, open_redirect_test, verbose):
+def save_results(output_file, ssrf_test, url_param_test, verbose):
     if not output_file:
         return
     file_extension = output_file.split('.')[-1].lower()
-    results = ssrf_test.all_results + open_redirect_test.all_results if verbose == 2 else \
-              ssrf_test.vulnerabilities_found + open_redirect_test.vulnerabilities_found
+    results = ssrf_test.all_results + url_param_test.all_results if verbose == 2 else \
+              ssrf_test.vulnerabilities_found + url_param_test.vulnerabilities_found
     if file_extension == 'json':
         with open(output_file, 'w') as f:
             json.dump(results, f, indent=4)
@@ -309,7 +327,9 @@ def save_results(output_file, ssrf_test, open_redirect_test, verbose):
                     f"### {result['test_type']} Test Result: {result['test_result']}",
                     f"- **URL:** {result['url']}",
                     f"- **Method:** {result['method']}",
-                    f"- **Headers:** {result['headers']}",
+                    f"- **Headers:** {result.get('headers', {})}",
+                    f"- **Parameter:** {result.get('param_name', '')}",
+                    f"- **Payload:** {result.get('payload', '')}",
                     f"- **Status Code:** {result['status_code']}",
                     f"- **Response Time:** {result['response_time']:.2f} seconds",
                     f"- **Analysis:** {result['analysis']}\n"
@@ -337,24 +357,26 @@ def main():
     try:
         ssrf_test = SSRFTest(target_url, hostname, args.oob, threads=args.threads, verbose=args.verbose)
         ssrf_test.run()
-        open_redirect_test = OpenRedirectTest(target_url, hostname, args.oob, threads=args.threads, verbose=args.verbose)
-        open_redirect_test.run()
-        save_results(args.output, ssrf_test, open_redirect_test, args.verbose)
+        url_param_test = URLParameterTest(target_url, hostname, args.oob, threads=args.threads, verbose=args.verbose)
+        url_param_test.run()
+        save_results(args.output, ssrf_test, url_param_test, args.verbose)
         print(Fore.CYAN + Style.BRIGHT + "\n========== Test Summary ==========")
-        total_vulns = len(ssrf_test.vulnerabilities_found) + len(open_redirect_test.vulnerabilities_found)
+        total_vulns = len(ssrf_test.vulnerabilities_found) + len(url_param_test.vulnerabilities_found)
         print(Fore.CYAN + f"Total vulnerabilities found: {total_vulns}")
         if ssrf_test.vulnerabilities_found:
             print(Fore.MAGENTA + Style.BRIGHT + "\n--- SSRF Vulnerabilities ---")
             for vuln in ssrf_test.vulnerabilities_found:
                 print(Fore.RED + f"- {vuln['method']} {vuln['url']}")
-                print(f"  Headers: {vuln['headers']}")
+                print(f"  Header: {vuln['header_name']}")
+                print(f"  Payload: {vuln['payload']}")
                 print(Fore.YELLOW + f"  Analysis: {vuln['analysis']}")
                 print(Fore.RED + "-" * 80)
-        if open_redirect_test.vulnerabilities_found:
-            print(Fore.MAGENTA + Style.BRIGHT + "\n--- Open Redirect Vulnerabilities ---")
-            for vuln in open_redirect_test.vulnerabilities_found:
+        if url_param_test.vulnerabilities_found:
+            print(Fore.MAGENTA + Style.BRIGHT + "\n--- URL Parameter SSRF Vulnerabilities ---")
+            for vuln in url_param_test.vulnerabilities_found:
                 print(Fore.RED + f"- {vuln['method']} {vuln['url']}")
-                print(f"  Headers: {vuln['headers']}")
+                print(f"  Parameter: {vuln['param_name']}")
+                print(f"  Payload: {vuln['payload']}")
                 print(Fore.YELLOW + f"  Analysis: {vuln['analysis']}")
                 print(Fore.RED + "-" * 80)
         if total_vulns == 0:
