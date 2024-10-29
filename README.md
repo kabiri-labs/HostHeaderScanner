@@ -1,4 +1,4 @@
-# HostHeaderScanner v1.0
+# HostHeaderScanner v1.1
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
@@ -137,7 +137,7 @@ The tool provides a detailed summary of the findings, highlighting any vulnerabi
 ### Sample Output
 
 ```
-HostHeaderScanner 1.0
+HostHeaderScanner 1.1
 GitHub: https://github.com/inpentest/HostHeaderScanner
 
 Target URL: http://example.com
