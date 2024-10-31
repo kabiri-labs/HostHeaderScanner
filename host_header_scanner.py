@@ -9,6 +9,7 @@ from multiprocessing.dummy import Pool as ThreadPool
 import json
 import statistics
 from colorama import init, Fore, Style
+import re  # Added for regular expression matching
 
 init(autoreset=True)
 
@@ -150,7 +151,7 @@ class SSRFTest(BaseTest):
         stdev_time = statistics.stdev(self.response_times) if len(self.response_times) > 1 else 0
 
         # Use dynamic threshold based on standard deviation
-        threshold_multiplier = 2  # Adjust this value to balance false positives and negatives
+        threshold_multiplier = 75  # Adjust this value to balance false positives and negatives
         upper_threshold = mean_time + (stdev_time * threshold_multiplier)
         lower_threshold = mean_time - (stdev_time * threshold_multiplier)
 
@@ -299,28 +300,52 @@ class OpenRedirectTest(BaseTest):
         except requests.RequestException:
             pass
 
-
 class URLParameterTest(BaseTest):
     def generate_payloads(self):
         payloads = []
         internal_urls = [
-            'http://localhost', 'http://127.0.0.1', 'http://169.254.169.254',
-            'http://metadata.google.internal', 'http://10.0.0.1', 'http://192.168.1.1',
-            'http://172.16.0.1', 'file:///etc/passwd'
+            'http://127.0.0.1',
+            'http://169.254.169.254/latest/meta-data/',
+            'file:///etc/passwd',
+            'http://[::1]',  # IPv6 localhost
         ]
         if self.oob_domain:
             internal_urls.append(f'http://{self.oob_domain}')
         payloads.extend(internal_urls)
         return payloads
 
+    def get_baseline_response(self):
+        # Send a request with a benign parameter value
+        parsed_url = urlparse(self.target_url)
+        query_params = parse_qs(parsed_url.query)
+        baseline_value = 'http://example.com'  # A benign URL
+        for param in self.params_to_test:
+            query_params[param] = baseline_value
+        new_query = urlencode(query_params, doseq=True)
+        url_with_baseline = parsed_url._replace(query=new_query).geturl()
+        try:
+            response = self.session.request(
+                'GET', url_with_baseline, headers=self.common_headers, timeout=5, allow_redirects=True
+            )
+            return response
+        except requests.RequestException:
+            return None
+
     def run(self):
+        self.common_headers = {
+            'User-Agent': f'Mozilla/5.0 (compatible; {__tool_name__}/{__version__})',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Connection': 'keep-alive',
+        }
+        self.params_to_test = ['url', 'next', 'redirect', 'dest', 'destination', 'uri', 'path']
+        self.baseline_response = self.get_baseline_response()
         payloads = self.generate_payloads()
-        params_to_test = ['url', 'next', 'redirect', 'dest', 'destination', 'uri', 'path']
         test_cases = [
             (method, payload, param_name)
             for method in self.methods
             for payload in payloads
-            for param_name in params_to_test
+            for param_name in self.params_to_test
         ]
         total_tests = len(test_cases)
         print("\nStarting URL Parameter SSRF Tests...")
@@ -342,12 +367,6 @@ class URLParameterTest(BaseTest):
         self.perform_request(*args)
 
     def perform_request(self, method, payload, param_name):
-        common_headers = {
-            'User-Agent': f'Mozilla/5.0 (compatible; {__tool_name__}/{__version__})',
-            'Accept': '*/*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Connection': 'keep-alive',
-        }
         parsed_url = urlparse(self.target_url)
         query_params = parse_qs(parsed_url.query)
         query_params[param_name] = payload
@@ -357,64 +376,95 @@ class URLParameterTest(BaseTest):
         try:
             start_time = time.time()
             response = self.session.request(
-                method, url_with_payload, headers=common_headers, timeout=5, allow_redirects=True
+                method, url_with_payload, headers=self.common_headers, timeout=5, allow_redirects=True
             )
             response_time = time.time() - start_time
-            analysis = self.analyze_response(response, payload)
-            if analysis:
-                self.vulnerabilities_found.append({
-                    'test_type': 'URL Parameter SSRF',
-                    'url': response.url,
-                    'method': method,
-                    'param_name': param_name,
-                    'payload': payload,
-                    'status_code': response.status_code,
-                    'response_time': response_time,
-                    'analysis': analysis,
-                    'test_result': 'Potentially Vulnerable'
-                })
-                if self.verbose >= 1:
-                    print(Fore.RED + Style.BRIGHT + "\n[!] URL Parameter SSRF Potential Vulnerability Detected!")
-                    print(f"URL: {response.url}")
-                    print(f"Method: {method}")
-                    print(f"Parameter: {param_name}")
-                    print(f"Payload: {payload}")
-                    print(f"Status Code: {response.status_code}")
-                    print(f"Response Time: {response_time:.2f}s")
-                    print(Fore.YELLOW + f"Analysis: {analysis}")
-                    print(Fore.RED + "-" * 80)
-            elif self.verbose == 2:
-                self.all_results.append({
-                    'test_type': 'URL Parameter SSRF',
-                    'url': response.url,
-                    'method': method,
-                    'param_name': param_name,
-                    'payload': payload,
-                    'status_code': response.status_code,
-                    'response_time': response_time,
-                    'analysis': "No significant anomalies detected.",
-                    'test_result': 'Not Vulnerable'
-                })
+
+            # Compare responses
+            if self.baseline_response:
+                is_different = self.is_response_different(self.baseline_response, response)
+                if is_different:
+                    analysis = self.analyze_response(response, payload)
+                    if analysis:
+                        self.vulnerabilities_found.append({
+                            'test_type': 'URL Parameter SSRF',
+                            'url': response.url,
+                            'method': method,
+                            'param_name': param_name,
+                            'payload': payload,
+                            'status_code': response.status_code,
+                            'response_time': response_time,
+                            'analysis': analysis,
+                            'test_result': 'Potentially Vulnerable'
+                        })
+                        if self.verbose >= 1:
+                            print(Fore.RED + Style.BRIGHT + "\n[!] URL Parameter SSRF Potential Vulnerability Detected!")
+                            print(f"URL: {response.url}")
+                            print(f"Method: {method}")
+                            print(f"Parameter: {param_name}")
+                            print(f"Payload: {payload}")
+                            print(f"Status Code: {response.status_code}")
+                            print(f"Response Time: {response_time:.2f}s")
+                            print(Fore.YELLOW + f"Analysis: {analysis}")
+                            print(Fore.RED + "-" * 80)
+                elif self.verbose == 2:
+                    self.all_results.append({
+                        'test_type': 'URL Parameter SSRF',
+                        'url': response.url,
+                        'method': method,
+                        'param_name': param_name,
+                        'payload': payload,
+                        'status_code': response.status_code,
+                        'response_time': response_time,
+                        'analysis': "No significant anomalies detected.",
+                        'test_result': 'Not Vulnerable'
+                    })
+            else:
+                # Handle case where baseline response is not available
+                pass
         except requests.RequestException:
             pass
 
+    def is_response_different(self, baseline_response, test_response):
+        # Compare status codes
+        if baseline_response.status_code != test_response.status_code:
+            return True
+        # Compare response lengths
+        baseline_length = len(baseline_response.content)
+        test_length = len(test_response.content)
+        length_difference = abs(baseline_length - test_length)
+        if length_difference > (0.1 * baseline_length):  # Allow 10% difference
+            return True
+        # Optionally compare specific headers
+        return False
+
     def analyze_response(self, response, payload):
-        # Improved SSRF detection based on response content and redirection indicators
-        known_indicators = [
-            'root:x:', 'localhost', '127.0.0.1', 'metadata',
-            'EC2', 'cloud', 'sql syntax', 'database error', 'exception', 'file not found',
-            'error', 'not found', 'forbidden'
-        ]
         lower_text = response.text.lower()
+        score = 0
         analysis = ''
-        for indicator in known_indicators:
+        # Assign weights
+        indicators = {
+            'root:x:0:0:': 5,
+            '127.0.0.1': 3,
+            'connection refused': 2,
+            'permission denied': 2,
+            'cannot open': 2,
+            'failed to connect': 2,
+            # Add more indicators as needed
+        }
+        for indicator, weight in indicators.items():
             if indicator in lower_text:
-                analysis += f"Response contains indicator: '{indicator}'. "
-        if response.status_code in [301, 302, 303, 307, 308]:
-            location_header = response.headers.get('Location', '')
-            if payload in location_header:
-                analysis += f"Redirects to payload URL: '{location_header}'. "
-        return analysis if analysis else None
+                score += weight
+                analysis += f"Found indicator '{indicator}' (weight {weight}). "
+        if response.status_code >= 500:
+            score += 1
+            analysis += f"Received server error status code: {response.status_code}. "
+        # Define a threshold
+        threshold = 5
+        if score >= threshold:
+            return analysis
+        else:
+            return None
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Host Header Injection Testing Tool')
