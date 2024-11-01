@@ -1,10 +1,10 @@
-# HostHeaderScanner v1.2
+# HostHeaderScanner v1.3
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/inpentest/HostHeaderScanner.svg?style=social&label=Star)](https://github.com/inpentest/HostHeaderScanner)
 
-**HostHeaderScanner** is a powerful and efficient tool designed to detect Host Header Injection vulnerabilities, including Server-Side Request Forgery (SSRF) and Open Redirects. By automating the testing process with crafted HTTP requests and analyzing responses, it helps you secure your web applications effectively.
+**HostHeaderScanner** is an advanced tool designed to detect Host Header Injection vulnerabilities, including Server-Side Request Forgery (SSRF), Open Redirects, and other anomalies. It uses sophisticated techniques, including crafted HTTP requests and comprehensive analysis, to help secure web applications effectively.
 
 ---
 
@@ -26,9 +26,11 @@
 
 ## Features
 
-- **Comprehensive Vulnerability Detection**: Identifies Host Header Injection vulnerabilities, including SSRF and Open Redirects.
+- **Comprehensive Vulnerability Detection**: Identifies Host Header Injection vulnerabilities, SSRF, Open Redirects, and HTTP header anomalies.
+- **Advanced SSRF Detection**: Uses response time analysis, header anomaly detection, and OOB interaction validation to identify potential SSRF vulnerabilities.
+- **OOB Interaction Support**: Supports Out-of-Band (OOB) payloads for SSRF validation.
 - **Multi-threaded Scanning**: Accelerates the testing process using concurrent threads.
-- **Detailed Analysis**: Provides in-depth analysis of responses to highlight potential vulnerabilities.
+- **Detailed Analysis and Reporting**: Highlights potential vulnerabilities, header anomalies, and Out-of-Band interactions.
 - **Customizable Verbosity**: Offers different levels of verbosity to control the amount of output.
 - **Exportable Reports**: Saves results in JSON or Markdown format for easy documentation.
 - **Graceful Interruption Handling**: Allows interruption with `Ctrl+C` and exits gracefully without data loss.
@@ -79,7 +81,7 @@ python host_header_scanner.py http://example.com
 ### Options
 
 - `<target_url>`: **(Required)** The target URL to scan.
-- `--oob <domain>`: Specify an out-of-band (OOB) domain for advanced testing.
+- `--oob <domain>`: Specify an Out-of-Band (OOB) domain for advanced SSRF testing.
 - `--threads <number>`: Number of concurrent threads (default is 5). Must be between 1 and 20.
 - `--verbose <level>`: Verbosity level (1 or 2). Level 2 provides more detailed output.
 - `--output <file>` or `-o <file>`: Output file to save the test results (supports `.json` and `.md` extensions).
@@ -126,18 +128,19 @@ python host_header_scanner.py http://example.com --threads 10 --verbose 2 --outp
 
 The tool provides a detailed summary of the findings, highlighting any vulnerabilities detected. The output includes:
 
-- **Test Type**: SSRF or Open Redirect.
+- **Test Type**: SSRF, Open Redirect, or Host Header Injection.
 - **URL Tested**: The target URL that was tested.
 - **HTTP Method Used**: GET, POST, PUT, DELETE.
 - **Manipulated Headers**: The HTTP headers used in the request.
 - **Status Code Received**: HTTP response status code.
 - **Response Time**: Time taken to receive a response.
-- **Analysis**: Interpretation of the results.
+- **Header Anomalies**: Details of any discrepancies in HTTP headers between baseline and test responses (e.g., changes to `Content-Type` or `Vary` headers).
+- **Analysis**: Interpretation of the results, including response time anomalies, header anomalies, and potential OOB interactions.
 
 ### Sample Output
 
 ```
-HostHeaderScanner 1.2
+HostHeaderScanner 1.3
 GitHub: https://github.com/inpentest/HostHeaderScanner
 
 Target URL: http://example.com
@@ -154,7 +157,7 @@ Method: PUT
 Headers: {'Host': '127.0.0.1:3306'}
 Status Code: 404
 Response Time: 1.25s
-Analysis: Response time (1.25s) is 5.00 standard deviations slower than the mean (0.20s).
+Analysis: Response time (1.25s) is above the typical range. Header anomalies detected: ["Content-Type changed from 'text/html; charset=utf-8' to 'text/html'"].
 --------------------------------------------------------------------------------
 
 ========== Test Summary ==========
@@ -163,7 +166,7 @@ Total vulnerabilities found: 1
 --- SSRF Vulnerabilities ---
 - PUT http://example.com/
   Headers: {'Host': '127.0.0.1:3306'}
-  Analysis: Response time (1.25s) is 5.00 standard deviations slower than the mean (0.20s).
+  Analysis: Response time (1.25s) is above the typical range. Header anomalies detected: ["Content-Type changed from 'text/html; charset=utf-8' to 'text/html'"].
 --------------------------------------------------------------------------------
 ===================================
 ```
@@ -231,3 +234,4 @@ Feel free to open an issue or pull request for any bugs, feature requests, or qu
 ---
 
 **Star this project** ⭐ if you find it useful!
+
