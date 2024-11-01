@@ -9,13 +9,13 @@ from multiprocessing.dummy import Pool as ThreadPool
 import json
 import statistics
 from colorama import init, Fore, Style
-import re  # Added for regular expression matching
+import re  # Regular expressions for precise matching
 
 init(autoreset=True)
 
 # Program metadata
 __tool_name__ = "HostHeaderScanner"
-__version__ = "1.2"
+__version__ = "1.3"
 __github_url__ = "https://github.com/inpentest/HostHeaderScanner"
 
 class BaseTest:
@@ -23,7 +23,7 @@ class BaseTest:
         self.target_url = target_url
         self.original_host = original_host
         self.oob_domain = oob_domain
-        self.methods = methods or ['GET', 'POST']
+        self.methods = methods or ['GET']
         self.session = requests.Session()
         self.session.verify = False
         requests.packages.urllib3.disable_warnings()
@@ -41,6 +41,9 @@ class SSRFTest(BaseTest):
         self.response_times = []
         self.results = []
         self.typical_delay = None
+        self.baseline_headers = {}
+        self.oob_interaction_detected = False  # Flag for OOB interaction
+        self.excluded_headers = ['Date', 'Server', 'Content-Length', 'Connection', 'Vary']  # Headers to exclude from anomaly detection
 
     def compute_typical_delay(self):
         delays = []
@@ -66,11 +69,23 @@ class SSRFTest(BaseTest):
             self.typical_delay = 1  # Default value if all requests failed
             print("\nFailed to compute typical delay time. Using default value of 1s.")
 
+    def collect_baseline_headers(self):
+        try:
+            response = self.session.get(self.target_url, timeout=5)
+            self.baseline_headers = response.headers
+            print("\nBaseline response headers collected for comparison.")
+        except requests.RequestException:
+            print("\nFailed to collect baseline headers.")
+            self.baseline_headers = {}
+
     def generate_payloads(self):
         internal_hosts = [
             'localhost', '127.0.0.1', '169.254.169.254',
             'metadata.google.internal', '192.168.1.1',
-            'phpmyadmin', 'test'
+            'phpmyadmin', 'test', '192.168.0.1',
+            '10.0.0.1', '172.16.0.1', '10.0.0.2',
+            '172.16.0.2', '192.168.1.100', '10.0.0.100',
+            '172.16.0.100'
         ]
         common_ports = [80, 443]
         payloads = internal_hosts + [f"{host}:{port}" for host in internal_hosts for port in common_ports]
@@ -80,6 +95,7 @@ class SSRFTest(BaseTest):
 
     def run(self):
         self.compute_typical_delay()  # Compute the typical delay time before starting the tests
+        self.collect_baseline_headers()  # Collect baseline headers
 
         payloads = self.generate_payloads()
         headers_to_test = [
@@ -136,8 +152,17 @@ class SSRFTest(BaseTest):
                 'status_code': response.status_code,
                 'response_time': response_time,
                 'response_body': response.text[:1000],
+                'response_headers': response.headers,
                 'payload': payload
             })
+
+            # Check for Out-of-Band (OOB) interactions
+            if self.oob_domain and payload == self.oob_domain:
+                # Monitor your OOB server separately to detect interactions
+                # Here, you can implement logic to verify if an OOB request was received
+                # For demonstration, we'll assume no interaction was detected
+                pass
+
         except requests.RequestException:
             pass
 
@@ -151,14 +176,21 @@ class SSRFTest(BaseTest):
         stdev_time = statistics.stdev(self.response_times) if len(self.response_times) > 1 else 0
 
         # Use dynamic threshold based on standard deviation
-        threshold_multiplier = 75  # Adjust this value to balance false positives and negatives
-        upper_threshold = mean_time + (stdev_time * threshold_multiplier)
-        lower_threshold = mean_time - (stdev_time * threshold_multiplier)
+        threshold_multiplier = 2  # Adjusted to a reasonable value
+        if stdev_time == 0:
+            upper_threshold = mean_time * 1.5
+            lower_threshold = mean_time * 0.5
+        else:
+            upper_threshold = mean_time + (stdev_time * threshold_multiplier)
+            lower_threshold = max(mean_time - (stdev_time * threshold_multiplier), 0)
 
         known_indicators = [
-            'internal', 'localhost', 'phpmyadmin', 'database error',
-            'root:x:', '127.0.0.1', 'server at', 'nginx', 'apache', 'sql syntax', 'fatal error'
+            'localhost', 'phpmyadmin', 'database error',
+            'root:x:0:0:', '127.0.0.1', 'server at', 'nginx', 'apache', 'sql syntax', 'fatal error'
         ]
+
+        # Compile regex patterns for indicators with word boundaries
+        indicator_patterns = {indicator: re.compile(r'\b' + re.escape(indicator) + r'\b') for indicator in known_indicators}
 
         for result in self.results:
             response_time = result['response_time']
@@ -173,11 +205,31 @@ class SSRFTest(BaseTest):
                 analysis += f"Response time ({response_time:.2f}s) is below lower threshold ({lower_threshold:.2f}s). "
                 is_vulnerable = True
 
-            # Check for known indicators in response content
+            # Check for known indicators in response content using regex
             lower_text = result['response_body'].lower()
-            for indicator in known_indicators:
-                if indicator in lower_text:
+            for indicator, pattern in indicator_patterns.items():
+                if pattern.search(lower_text):
                     analysis += f"Response contains indicator: '{indicator}'. "
+                    is_vulnerable = True
+
+            # Check for response header anomalies, excluding specified headers
+            if self.baseline_headers:
+                response_headers = result.get('response_headers', {})
+                header_anomalies = self.detect_header_anomalies(response_headers, self.baseline_headers)
+                if header_anomalies:
+                    analysis += f"Header anomalies detected: {header_anomalies}. "
+                    is_vulnerable = True
+
+            # Check if the response indicates an OOB interaction
+            # Note: Actual OOB detection should be handled externally by monitoring your OOB server
+            # Here, we provide a placeholder for future integration
+            if self.oob_domain and self.payload_contains_oob(result['payload']):
+                # Implement logic to verify OOB interaction
+                # For example, ping your OOB server's API to check for received requests
+                # Placeholder:
+                oob_interaction = False  # Replace with actual check
+                if oob_interaction:
+                    analysis += "Out-of-Band interaction detected. "
                     is_vulnerable = True
 
             if is_vulnerable:
@@ -191,7 +243,7 @@ class SSRFTest(BaseTest):
                     'payload': result['payload'],
                     'status_code': result['status_code'],
                     'response_time': response_time,
-                    'analysis': analysis,
+                    'analysis': analysis.strip(),
                     'test_result': test_result
                 })
                 if self.verbose >= 1:
@@ -202,7 +254,7 @@ class SSRFTest(BaseTest):
                     print(f"Payload: {result['payload']}")
                     print(f"Status Code: {result['status_code']}")
                     print(f"Response Time: {response_time:.2f}s")
-                    print(Fore.YELLOW + f"Analysis: {analysis}")
+                    print(Fore.YELLOW + f"Analysis: {analysis.strip()}")
                     print(Fore.RED + "-" * 80)
             elif self.verbose == 2:
                 self.all_results.append({
@@ -211,11 +263,37 @@ class SSRFTest(BaseTest):
                     'method': result['method'],
                     'headers': result['headers'],
                     'header_name': result['header_name'],
+                    'payload': result['payload'],
                     'status_code': result['status_code'],
                     'response_time': response_time,
                     'analysis': "No significant anomalies detected.",
                     'test_result': 'Not Vulnerable'
                 })
+
+    def payload_contains_oob(self, payload):
+        """
+        Placeholder function to check if the payload contains the OOB domain.
+        Implement actual logic based on your OOB server's setup.
+        """
+        return payload.strip('/') == self.oob_domain.strip('/') if self.oob_domain else False
+
+    def detect_header_anomalies(self, response_headers, baseline_headers):
+        """
+        Compare response headers to baseline headers and identify anomalies.
+        Excludes headers specified in self.excluded_headers.
+        Returns a list of anomalies detected.
+        """
+        anomalies = []
+        for header, value in response_headers.items():
+            if header in self.excluded_headers:
+                continue  # Skip excluded headers
+            baseline_value = baseline_headers.get(header)
+            if baseline_value:
+                if value != baseline_value:
+                    anomalies.append(f"{header} changed from '{baseline_value}' to '{value}'")
+            else:
+                anomalies.append(f"New header '{header}' added with value '{value}'")
+        return anomalies
 
 class OpenRedirectTest(BaseTest):
     def run(self):
@@ -243,15 +321,30 @@ class OpenRedirectTest(BaseTest):
             pool.join()
             sys.exit(0)
 
+        self.perform_redirect_analysis()
+
     def generate_payloads(self):
         payloads = [
+            # Revised payloads without schemes and paths
             f"{self.oob_domain}" if self.oob_domain else 'example.com',
             'example.com',
-            '//example.com',
-            '/\\example.com',
-            '/..//example.com',
-            '///example.com',
-            '////example.com/%2e%2e'
+            'www.example.com',
+            'evil.com',
+            'malicious.com',
+            'attacker.com',
+            'sub.example.com',
+            'sub.attacker.com',
+            '127.0.0.1',
+            '192.168.1.1',
+            '10.0.0.1',
+            '[::1]',
+            'localhost',
+            'example.com:8080',
+            'evil.com:443',
+            'malicious.com:8000',
+            'attacker.com:8080',
+            'sub.example.com:3000',
+            'sub.attacker.com:8443'
         ]
         return payloads
 
@@ -273,7 +366,11 @@ class OpenRedirectTest(BaseTest):
             )
             if response.status_code in [301, 302, 303, 307, 308]:
                 location = response.headers.get('Location', '')
-                if payload in location:
+                # Check if the Location header starts with the injected host
+                injected_host = urlparse(f"http://{payload}").hostname  # Extract hostname from payload
+                parsed_location = urlparse(location)
+                response_host = parsed_location.hostname
+                if response_host and response_host.lower() == (injected_host or '').lower():
                     analysis = f"Redirection to injected host detected in 'Location' header: {location}"
                     self.vulnerabilities_found.append({
                         'test_type': 'Open Redirect',
@@ -300,17 +397,50 @@ class OpenRedirectTest(BaseTest):
         except requests.RequestException:
             pass
 
+    def perform_redirect_analysis(self):
+        # Additional analysis can be implemented here if needed
+        pass
+
 class URLParameterTest(BaseTest):
     def generate_payloads(self):
         payloads = []
         internal_urls = [
-            'http://127.0.0.1',
-            'http://169.254.169.254/latest/meta-data/',
-            'file:///etc/passwd',
-            'http://[::1]',  # IPv6 localhost
+            '127.0.0.1',
+            '169.254.169.254/latest/meta-data/',
+            '/etc/passwd',
+            '[::1]',  # IPv6 localhost
+            '10.0.0.1',
+            '10.0.0.2',
+            '172.16.0.1',
+            '172.31.255.255',
+            '192.168.0.1',
+            '192.168.255.255',
+            '169.254.0.1',
+            '169.254.255.254',
+            '[fd00::]/',  # Unique local IPv6
+            '///127.0.0.1',
+            '////127.0.0.1',
+            '127.0.0.1:80',
+            '127.0.0.1:65535',
+            '127.0.0.1:invalid',  # Invalid port
+            '127.0.0.1:0',  # Edge port
+            '127.0.0.1:99999',  # Out of range port
+            '/%2e%2e',  # Path traversal
+            '/etc/hosts',
+            '/var/log/syslog',
+            '/C:/Windows/System32/drivers/etc/hosts',
+            # Encoded and obfuscated payloads
+            'http%3A%2F%2F127.0.0.1',  # URL-encoded
+            'http://127.0.0.1%2Fadmin',  # URL-encoded path
+            'file%3A%2F%2F%2Fetc%2Fpasswd',  # URL-encoded file protocol
+            'http://127.0.0.1\u200C',  # Zero-width non-joiner
+            'http://\u0021@127.0.0.1',  # Unicode escape
         ]
         if self.oob_domain:
-            internal_urls.append(f'http://{self.oob_domain}')
+            # Ensure the OOB domain is properly formatted without schemes or paths
+            # e.g., 'oob.example.com' instead of 'http://oob.example.com'
+            oob_payload = self.oob_domain.strip('/')
+            internal_urls.append(oob_payload)
         payloads.extend(internal_urls)
         return payloads
 
@@ -363,6 +493,8 @@ class URLParameterTest(BaseTest):
             pool.join()
             sys.exit(0)
 
+        self.perform_parameter_analysis()
+
     def perform_request_wrapper(self, args):
         self.perform_request(*args)
 
@@ -407,22 +539,24 @@ class URLParameterTest(BaseTest):
                             print(f"Response Time: {response_time:.2f}s")
                             print(Fore.YELLOW + f"Analysis: {analysis}")
                             print(Fore.RED + "-" * 80)
-                elif self.verbose == 2:
-                    self.all_results.append({
-                        'test_type': 'URL Parameter SSRF',
-                        'url': response.url,
-                        'method': method,
-                        'param_name': param_name,
-                        'payload': payload,
-                        'status_code': response.status_code,
-                        'response_time': response_time,
-                        'analysis': "No significant anomalies detected.",
-                        'test_result': 'Not Vulnerable'
-                    })
-            else:
-                # Handle case where baseline response is not available
-                pass
         except requests.RequestException:
+            pass
+
+    def perform_parameter_analysis(self):
+        if not self.baseline_response:
+            print(Fore.YELLOW + "Baseline response not available for parameter analysis.")
+            return
+
+        known_indicators = [
+            'localhost', 'phpmyadmin', 'database error',
+            'root:x:0:0:', '127.0.0.1', 'server at', 'nginx', 'apache', 'sql syntax', 'fatal error'
+        ]
+
+        # Compile regex patterns for indicators with word boundaries
+        indicator_patterns = {indicator: re.compile(r'\b' + re.escape(indicator) + r'\b') for indicator in known_indicators}
+
+        for result in self.vulnerabilities_found:
+            # Additional analysis can be implemented here if needed
             pass
 
     def is_response_different(self, baseline_response, test_response):
@@ -469,7 +603,7 @@ class URLParameterTest(BaseTest):
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Host Header Injection Testing Tool')
     parser.add_argument('url', help='Target URL')
-    parser.add_argument('--oob', help='OOB domain for testing')
+    parser.add_argument('--oob', help='OOB domain for testing (e.g., oob.example.com)')
     parser.add_argument('--threads', type=int, default=5, help='Number of threads (1-20)')
     parser.add_argument('--verbose', type=int, choices=[1, 2], default=1, help='Verbosity level')
     parser.add_argument('--output', '-o', help='Output file to save the test results')
@@ -519,6 +653,13 @@ def save_results(output_file, tests, verbose):
             f.write('\n'.join(lines))
         print(f"\nReport saved to {output_file}")
 
+def save_oob_logs(oob_logs):
+    """
+    Placeholder function to save OOB logs.
+    Implement actual OOB log handling based on your OOB server setup.
+    """
+    pass
+
 def main():
     print(Fore.CYAN + Style.BRIGHT + f"{__tool_name__} {__version__}")
     print(Fore.CYAN + f"GitHub: {__github_url__}\n")
@@ -533,15 +674,29 @@ def main():
     print(f"Original Host: {hostname}")
     print(f"Using {args.threads} threads.")
     print(f"Verbosity level set to {args.verbose}.")
+
+    if args.oob:
+        print(f"OOB Domain set to: {args.oob}")
+        print("Ensure your OOB server is set up and monitoring for incoming requests.\n")
+    else:
+        print("No OOB Domain provided. OOB interaction monitoring will be disabled.\n")
+
     try:
-        ssrf_test = SSRFTest(target_url, hostname, args.oob, threads=args.threads, verbose=args.verbose)
+        ssrf_test = SSRFTest(target_url, hostname, args.oob, methods=['GET'], threads=args.threads, verbose=args.verbose)
         ssrf_test.run()
-        url_param_test = URLParameterTest(target_url, hostname, args.oob, threads=args.threads, verbose=args.verbose)
+
+        url_param_test = URLParameterTest(target_url, hostname, args.oob, methods=['GET'], threads=args.threads, verbose=args.verbose)
         url_param_test.run()
-        open_redirect_test = OpenRedirectTest(target_url, hostname, args.oob, threads=args.threads, verbose=args.verbose)
+
+        open_redirect_test = OpenRedirectTest(target_url, hostname, args.oob, methods=['GET'], threads=args.threads, verbose=args.verbose)
         open_redirect_test.run()
+
         tests = [ssrf_test, url_param_test, open_redirect_test]
         save_results(args.output, tests, args.verbose)
+
+        # Placeholder for OOB log saving if implemented
+        # save_oob_logs(oob_logs)
+
         print(Fore.CYAN + Style.BRIGHT + "\n========== Test Summary ==========")
         total_vulns = sum(len(test.vulnerabilities_found) for test in tests)
         print(Fore.CYAN + f"Total vulnerabilities found: {total_vulns}")
