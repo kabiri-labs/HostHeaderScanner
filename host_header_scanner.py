@@ -43,7 +43,7 @@ class SSRFTest(BaseTest):
         self.typical_delay = None
         self.baseline_headers = {}
         self.oob_interaction_detected = False  # Flag for OOB interaction
-        self.excluded_headers = ['Date', 'Server', 'Content-Length', 'Connection', 'Vary']  # Headers to exclude from anomaly detection
+        self.excluded_headers = ['Date', 'Server', 'Content-Length', 'Connection', 'Vary', 'Content-Type']  # Headers to exclude from anomaly detection
 
     def compute_typical_delay(self):
         delays = []
@@ -82,10 +82,7 @@ class SSRFTest(BaseTest):
         internal_hosts = [
             'localhost', '127.0.0.1', '169.254.169.254',
             'metadata.google.internal', '192.168.1.1',
-            'phpmyadmin', 'test', '192.168.0.1',
-            '10.0.0.1', '172.16.0.1', '10.0.0.2',
-            '172.16.0.2', '192.168.1.100', '10.0.0.100',
-            '172.16.0.100'
+            'phpmyadmin', 'test', '192.168.0.1', '127.2.2.2'
         ]
         common_ports = [80, 443]
         payloads = internal_hosts + [f"{host}:{port}" for host in internal_hosts for port in common_ports]
@@ -329,22 +326,8 @@ class OpenRedirectTest(BaseTest):
             f"{self.oob_domain}" if self.oob_domain else 'example.com',
             'example.com',
             'www.example.com',
-            'evil.com',
-            'malicious.com',
-            'attacker.com',
-            'sub.example.com',
-            'sub.attacker.com',
-            '127.0.0.1',
-            '192.168.1.1',
-            '10.0.0.1',
-            '[::1]',
-            'localhost',
-            'example.com:8080',
-            'evil.com:443',
-            'malicious.com:8000',
-            'attacker.com:8080',
-            'sub.example.com:3000',
-            'sub.attacker.com:8443'
+            'example.com:80',
+            'www.example.com:443'
         ]
         return payloads
 
@@ -406,35 +389,49 @@ class URLParameterTest(BaseTest):
         payloads = []
         internal_urls = [
             '127.0.0.1',
+            'localhost',
             '169.254.169.254/latest/meta-data/',
-            '/etc/passwd',
-            '[::1]',  # IPv6 localhost
-            '10.0.0.1',
-            '10.0.0.2',
             '172.16.0.1',
             '172.31.255.255',
             '192.168.0.1',
             '192.168.255.255',
             '169.254.0.1',
             '169.254.255.254',
+            '[::1]',  # IPv6 localhost
             '[fd00::]/',  # Unique local IPv6
-            '///127.0.0.1',
-            '////127.0.0.1',
-            '127.0.0.1:80',
+            
+            # Edge Ports and Out-of-Range Ports
+            '127.0.0.1:3000',
+            '127.0.0.1:81',
+            '127.0.0.1:85',
+            '127.0.0.1:3001',
             '127.0.0.1:65535',
-            '127.0.0.1:invalid',  # Invalid port
-            '127.0.0.1:0',  # Edge port
-            '127.0.0.1:99999',  # Out of range port
-            '/%2e%2e',  # Path traversal
-            '/etc/hosts',
+            '127.0.0.1:0',
+            '127.0.0.1:8080',
+            
+            # Path Traversal and File Access
+            '/etc/passwd',
             '/var/log/syslog',
             '/C:/Windows/System32/drivers/etc/hosts',
-            # Encoded and obfuscated payloads
+            '/%2e%2e',  # Path traversal encoded
+            'file:///etc/hosts',
+            
+            # Encoded URLs
             'http%3A%2F%2F127.0.0.1',  # URL-encoded
             'http://127.0.0.1%2Fadmin',  # URL-encoded path
             'file%3A%2F%2F%2Fetc%2Fpasswd',  # URL-encoded file protocol
+            
+            # Unicode and Obfuscation
             'http://127.0.0.1\u200C',  # Zero-width non-joiner
             'http://\u0021@127.0.0.1',  # Unicode escape
+            
+            # Alternate IP Representations
+            'http://0x7f000001',  # Hexadecimal for 127.0.0.1
+            'http://2130706433',  # Dword for 127.0.0.1
+            'http://0177.0.0.01',  # Octal for 127.0.0.1
+            
+            # Potential Redirections
+            'http://example.com@127.0.0.1',
         ]
         if self.oob_domain:
             # Ensure the OOB domain is properly formatted without schemes or paths
