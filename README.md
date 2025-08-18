@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
-[![GitHub Stars](https://img.shields.io/github/stars/inpentest/HostHeaderScanner.svg?style=social&label=Star)](https://github.com/inpentest/HostHeaderScanner)
+[![GitHub Stars](https://img.shields.io/github/stars/ahmad-kabiri/HostHeaderScanner.svg?style=social&label=Star)](https://github.com/ahmad-kabiri/HostHeaderScanner)
 
 **HostHeaderScanner** is an advanced tool designed to detect Host Header Injection vulnerabilities, including Server-Side Request Forgery (SSRF), Open Redirects, and other anomalies. It uses sophisticated techniques, including crafted HTTP requests and comprehensive analysis, to help secure web applications effectively.
 
@@ -46,7 +46,7 @@
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/inpentest/HostHeaderScanner.git
+git clone https://github.com/ahmad-kabiri/HostHeaderScanner.git
 cd HostHeaderScanner
 ```
 
@@ -141,7 +141,7 @@ The tool provides a detailed summary of the findings, highlighting any vulnerabi
 
 ```
 HostHeaderScanner 1.3
-GitHub: https://github.com/inpentest/HostHeaderScanner
+GitHub: https://github.com/ahmad-kabiri/HostHeaderScanner
 
 Target URL: http://example.com
 Original Host: example.com
@@ -227,11 +227,12 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 For support or inquiries:
 
 - **Email**: [certification.kabiri@gmail.com](mailto:certification.kabiri@gmail.com)
-- **GitHub Issues**: [Create an Issue](https://github.com/inpentest/HostHeaderScanner/issues)
+- **GitHub Issues**: [Create an Issue](https://github.com/ahmad-kabiri/HostHeaderScanner/issues)
 
 Feel free to open an issue or pull request for any bugs, feature requests, or questions.
 
 ---
 
 **Star this project** ⭐ if you find it useful!
+
 
