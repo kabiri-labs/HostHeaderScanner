@@ -1,4 +1,4 @@
-# HostHeaderScanner v1.3.0
+# HostHeaderScanner v1.4.0
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
@@ -26,11 +26,13 @@
 
 ## Features
 
-- **Comprehensive Vulnerability Detection**: Identifies Host Header Injection vulnerabilities, SSRF, Open Redirects, and HTTP header anomalies.
-- **Advanced SSRF Detection**: Uses response time analysis, header anomaly detection, and OOB interaction validation to identify potential SSRF vulnerabilities.
-- **OOB Interaction Support**: Supports Out-of-Band (OOB) payloads for SSRF validation.
-- **Multi-threaded Scanning**: Accelerates the testing process using concurrent threads.
-- **Detailed Analysis and Reporting**: Highlights potential vulnerabilities, header anomalies, and Out-of-Band interactions.
+- **Reflection-based Host Header Injection**: Injects a unique random marker host across `Host`, `X-Forwarded-Host`, `X-Forwarded-For`, `Forwarded` and other routing headers, then detects reflection in the response body, the `Location` header and other response headers. Because the marker is unique, findings are high-confidence (cache poisoning / password-reset poisoning / link poisoning).
+- **SSRF Detection**: Combines response-time deviation, internal-target indicators and header anomalies behind a weighted scoring model to reduce false positives.
+- **Open Redirect Detection**: Flags redirects whose `Location` host matches an injected Host value.
+- **URL Parameter SSRF**: Probes common parameters (`url`, `next`, `redirect`, ...) against internal targets with baseline differencing.
+- **OOB Correlation**: Accepts an `--oob` domain that is embedded into payloads as a unique subdomain so interactions can be correlated on your own collaborator/listener.
+- **Multi-threaded Scanning**: Uses a bounded `ThreadPoolExecutor` with connection pooling and automatic retries.
+- **Flexible Requests**: Configurable HTTP methods, per-request timeout, custom headers, upstream proxy and optional TLS verification bypass.
 - **Customizable Verbosity**: Offers different levels of verbosity to control the amount of output.
 - **Exportable Reports**: Saves results in JSON or Markdown format for easy documentation.
 - **Graceful Interruption Handling**: Allows interruption with `Ctrl+C` and exits gracefully without data loss.
@@ -81,8 +83,13 @@ python host_header_scanner.py http://example.com
 ### Options
 
 - `<target_url>`: **(Required)** The target URL to scan.
-- `--oob <domain>`: Specify an Out-of-Band (OOB) domain for advanced SSRF testing.
+- `--oob <domain>`: Specify an Out-of-Band (OOB) domain for advanced SSRF correlation.
 - `--threads <number>`: Number of concurrent threads (default is 5). Must be between 1 and 20.
+- `--timeout <seconds>`: Per-request timeout in seconds (default is 10).
+- `--methods <list>`: Comma-separated HTTP methods to test (default `GET`, e.g. `GET,POST`).
+- `--header <"Name: Value">` or `-H`: Add a custom request header. Repeatable.
+- `--proxy <url>`: Route traffic through an upstream proxy (e.g. `http://127.0.0.1:8080`).
+- `--insecure` or `-k`: Disable TLS certificate verification.
 - `--verbose <level>`: Verbosity level (1 or 2). Level 2 provides more detailed output.
 - `--output <file>` or `-o <file>`: Output file to save the test results (supports `.json` and `.md` extensions).
 
@@ -112,10 +119,22 @@ python host_header_scanner.py http://example.com -o results.json
 python host_header_scanner.py http://example.com --oob oob.example.com
 ```
 
+#### Test Additional Methods and Route Through a Proxy
+
+```bash
+python host_header_scanner.py http://example.com --methods GET,POST --proxy http://127.0.0.1:8080
+```
+
+#### Send Custom Headers (e.g. Authentication)
+
+```bash
+python host_header_scanner.py http://example.com -H "Authorization: Bearer <token>" -H "Cookie: session=abc"
+```
+
 #### Full Command
 
 ```bash
-python host_header_scanner.py http://example.com --threads 10 --verbose 2 --output results.md --oob oob.example.com
+python host_header_scanner.py http://example.com --threads 10 --timeout 8 --verbose 2 --output results.md --oob oob.example.com
 ```
 
 ### Interrupting the Program
@@ -140,33 +159,36 @@ The tool provides a detailed summary of the findings, highlighting any vulnerabi
 ### Sample Output
 
 ```
-HostHeaderScanner 1.3
+HostHeaderScanner 1.4.0
 GitHub: https://github.com/kabiri-labs/HostHeaderScanner
 
 Target URL: http://example.com
 Original Host: example.com
-Using 5 threads.
+Methods: GET
+Using 5 threads (timeout 10.0s).
 Verbosity level set to 1.
 
-Starting SSRF Tests...
-SSRF Testing: 100%|█████████████████████████████████████████| 780/780 [00:30<00:00, 25.50test/s]
+Starting Host Header Injection Testing...
+Host Header Injection Testing: 100%|████████████████████████| 27/27 [00:06<00:00, 4.34test/s]
 
-[!] SSRF Potential Vulnerability Detected!
+[!] Host Header Injection Finding!
 URL: http://example.com/
-Method: PUT
-Headers: {'Host': '127.0.0.1:3306'}
-Status Code: 404
-Response Time: 1.25s
-Analysis: Response time (1.25s) is above the typical range. Header anomalies detected: ["Content-Type changed from 'text/html; charset=utf-8' to 'text/html'"].
+Method: GET
+Header: X-Forwarded-Host
+Payload: 834503a3f66d.example-collab.com
+Status Code: 302
+Response Time: 0.01s
+Analysis: Injected host reflected in 'Location' header: https://834503a3f66d.example-collab.com/login Injected host reflected in response body (cache/link poisoning).
 --------------------------------------------------------------------------------
 
 ========== Test Summary ==========
-Total vulnerabilities found: 1
+Total findings: 1
 
---- SSRF Vulnerabilities ---
-- PUT http://example.com/
-  Headers: {'Host': '127.0.0.1:3306'}
-  Analysis: Response time (1.25s) is above the typical range. Header anomalies detected: ["Content-Type changed from 'text/html; charset=utf-8' to 'text/html'"].
+--- Host Header Injection ---
+- GET http://example.com/
+  Header/Parameter: X-Forwarded-Host
+  Payload: 834503a3f66d.example-collab.com
+  Analysis: Injected host reflected in 'Location' header: https://834503a3f66d.example-collab.com/login Injected host reflected in response body (cache/link poisoning).
 --------------------------------------------------------------------------------
 ===================================
 ```
