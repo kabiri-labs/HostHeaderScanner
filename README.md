@@ -1,4 +1,4 @@
-# HostHeaderScanner v1.4.0
+# HostHeaderScanner v1.5.0
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
@@ -26,7 +26,10 @@
 
 ## Features
 
-- **Reflection-based Host Header Injection**: Injects a unique random marker host across `Host`, `X-Forwarded-Host`, `X-Forwarded-For`, `Forwarded` and other routing headers, then detects reflection in the response body, the `Location` header and other response headers. Because the marker is unique, findings are high-confidence (cache poisoning / password-reset poisoning / link poisoning).
+- **Reflection-based Host Header Injection**: Injects a unique random marker host across `Host`, `X-Forwarded-Host`, `X-Forwarded-For`, `Forwarded` and 15+ other routing headers, then detects reflection in the response body, the `Location` header and other response headers. Because the marker is unique, findings are high-confidence (cache poisoning / password-reset poisoning / link poisoning).
+- **Raw HTTP Validation Bypasses**: Uses a built-in raw HTTP/1.1 client (not `requests`) to send malformed requests that bypass Host validation: **duplicate `Host` headers**, **absolute-URI request lines**, **indented (line-folded) headers** and host overrides.
+- **Confirmed Web Cache Poisoning**: Adds a unique cache-buster, sends a poisoning request via unkeyed headers, then re-requests the same URL *without* the header. A surviving marker confirms the response is cached and served to other users, and `X-Cache`/`Age`/`CF-Cache-Status` are reported.
+- **Host-based Access Control Bypass**: Detects 401/403 endpoints that become reachable when presenting an internal host or client IP (`Host: localhost`, `X-Forwarded-For: 127.0.0.1`, ...), plus front-end path-override headers (`X-Original-URL`, `X-Rewrite-URL`).
 - **SSRF Detection**: Combines response-time deviation, internal-target indicators and header anomalies behind a weighted scoring model to reduce false positives.
 - **Open Redirect Detection**: Flags redirects whose `Location` host matches an injected Host value.
 - **URL Parameter SSRF**: Probes common parameters (`url`, `next`, `redirect`, ...) against internal targets with baseline differencing.

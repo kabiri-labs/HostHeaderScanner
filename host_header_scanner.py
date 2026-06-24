@@ -4,6 +4,8 @@
 import argparse
 import json
 import re
+import socket
+import ssl
 import statistics
 import sys
 import time
@@ -23,7 +25,7 @@ init(autoreset=True)
 
 # Program metadata
 __tool_name__ = "HostHeaderScanner"
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 __github_url__ = "https://github.com/kabiri-labs/HostHeaderScanner"
 
 
@@ -146,6 +148,41 @@ HOST_HEADERS = [
     "X-Original-Host",
     "X-Real-IP",
     "Forwarded",
+    "X-Forwarded-Proto",
+    "X-Forwarded-Scheme",
+    "X-Forwarded-Port",
+    "X-Forwarded-Prefix",
+    "True-Client-IP",
+    "CF-Connecting-IP",
+    "Fastly-Client-IP",
+    "X-Cluster-Client-IP",
+    "Base-Url",
+    "Request-Uri",
+]
+
+# Subset of headers that frameworks frequently treat as the effective host and
+# that proxies often leave unkeyed in the cache (good cache-poisoning candidates).
+UNKEYED_HOST_HEADERS = [
+    "X-Forwarded-Host",
+    "X-Host",
+    "X-Forwarded-Server",
+    "X-Original-Host",
+    "X-HTTP-Host-Override",
+    "Base-Url",
+]
+
+# Headers that may rewrite the routed path/ACL on the front-end (ACL bypass).
+PATH_OVERRIDE_HEADERS = [
+    "X-Original-URL",
+    "X-Rewrite-URL",
+    "X-Override-URL",
+    "Request-Uri",
+]
+
+# Response headers that reveal whether a cache served the response.
+CACHE_STATUS_HEADERS = [
+    "X-Cache", "X-Cache-Hits", "Age", "CF-Cache-Status",
+    "X-Served-By", "X-Cache-Lookup", "X-Drupal-Cache", "X-Varnish",
 ]
 
 
@@ -551,6 +588,335 @@ class URLParameterTest(BaseTest):
         return " ".join(notes) if score >= 5 else None
 
 
+class RawResponse:
+    """Lightweight response object produced by the raw HTTP client."""
+
+    def __init__(self, status_code, headers, text):
+        self.status_code = status_code
+        self.headers = headers  # list of (name, value) preserving duplicates
+        self.text = text
+
+    def get(self, name):
+        name = name.lower()
+        for header, value in self.headers:
+            if header.lower() == name:
+                return value
+        return None
+
+
+class RawHTTPClient:
+    """Minimal raw HTTP/1.1 client.
+
+    Unlike ``requests``, it sends the request line and header lines verbatim,
+    which is what makes duplicate ``Host`` headers, absolute-URI request lines
+    and obsolete line folding possible - the building blocks of most Host
+    header validation bypasses.
+    """
+
+    def __init__(self, timeout=10, verify=True, max_bytes=200_000):
+        self.timeout = timeout
+        self.verify = verify
+        self.max_bytes = max_bytes
+
+    def send(self, scheme, host, port, request_line, header_lines, sni_host=None):
+        request = request_line + "\r\n" + "\r\n".join(header_lines) + "\r\n\r\n"
+        raw = b""
+        sock = None
+        try:
+            sock = socket.create_connection((host, port), timeout=self.timeout)
+            if scheme == "https":
+                context = ssl.create_default_context()
+                if not self.verify:
+                    context.check_hostname = False
+                    context.verify_mode = ssl.CERT_NONE
+                sock = context.wrap_socket(sock, server_hostname=sni_host or host)
+            sock.sendall(request.encode("latin-1", "ignore"))
+            sock.settimeout(self.timeout)
+            while len(raw) < self.max_bytes:
+                try:
+                    chunk = sock.recv(8192)
+                except (socket.timeout, ssl.SSLError):
+                    break
+                if not chunk:
+                    break
+                raw += chunk
+        except OSError:
+            return None
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+        return self._parse(raw)
+
+    @staticmethod
+    def _parse(raw):
+        if not raw:
+            return None
+        head, _, body = raw.partition(b"\r\n\r\n")
+        lines = head.split(b"\r\n")
+        status_line = lines[0].decode("latin-1", "replace") if lines else ""
+        parts = status_line.split(" ", 2)
+        status = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        headers = []
+        for line in lines[1:]:
+            if b":" in line:
+                name, value = line.split(b":", 1)
+                headers.append((
+                    name.decode("latin-1", "replace").strip(),
+                    value.decode("latin-1", "replace").strip(),
+                ))
+        return RawResponse(status, headers, body.decode("latin-1", "replace"))
+
+
+class HostBypassTest(BaseTest):
+    """Host header validation bypasses that require raw, un-normalised HTTP.
+
+    Sends duplicate Host headers, absolute-URI request lines and indented
+    (line-folded) headers carrying a unique marker host, then checks whether
+    the marker is reflected back - proving the validation can be bypassed.
+    """
+
+    test_type = "Host Header Bypass"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        parsed = urlparse(self.target_url)
+        self.scheme = parsed.scheme or "http"
+        self.connect_host = parsed.hostname
+        self.connect_port = parsed.port or (443 if self.scheme == "https" else 80)
+        self.path = parsed.path or "/"
+        if parsed.query:
+            self.path += "?" + parsed.query
+        self.client = RawHTTPClient(timeout=self.timeout, verify=not self._insecure())
+
+    def _insecure(self):
+        # Mirror the verification mode chosen for the shared requests session.
+        return self.session.verify is False
+
+    def base_lines(self, host_value):
+        return [
+            f"Host: {host_value}",
+            f"User-Agent: Mozilla/5.0 (compatible; {__tool_name__}/{__version__})",
+            "Accept: */*",
+            "Connection: close",
+        ]
+
+    def techniques(self, marker):
+        host = self.original_host
+        # Each technique returns (name, request_line, header_lines).
+        return [
+            (
+                "Duplicate Host header",
+                f"GET {self.path} HTTP/1.1",
+                [f"Host: {host}", f"Host: {marker}",
+                 f"User-Agent: {__tool_name__}/{__version__}", "Connection: close"],
+            ),
+            (
+                "Absolute-URI request line",
+                f"GET {self.scheme}://{marker}{self.path} HTTP/1.1",
+                self.base_lines(host),
+            ),
+            (
+                "Indented (line-folded) Host header",
+                f"GET {self.path} HTTP/1.1",
+                [f"Host: {host}", f" Host: {marker}",
+                 f"User-Agent: {__tool_name__}/{__version__}", "Connection: close"],
+            ),
+            (
+                "Host override",
+                f"GET {self.path} HTTP/1.1",
+                self.base_lines(marker),
+            ),
+        ]
+
+    def run(self):
+        if not self.connect_host:
+            return
+        token = uuid.uuid4().hex[:12]
+        marker = f"{token}.example-collab.com"
+        self.marker_token = token
+        cases = [(name, line, headers)
+                 for name, line, headers in self.techniques(marker)]
+        self.run_pool(self.worker, cases, "Host Header Bypass Testing")
+
+    def worker(self, technique, request_line, header_lines):
+        response = self.client.send(
+            self.scheme, self.connect_host, self.connect_port,
+            request_line, header_lines, sni_host=self.connect_host,
+        )
+        if response is None:
+            return
+        location = response.get("Location") or ""
+        reflected_body = self.marker_token in response.text
+        reflected_location = self.marker_token in location
+        header_hits = [
+            name for name, value in response.headers
+            if name.lower() != "location" and self.marker_token in value
+        ]
+        if not (reflected_body or reflected_location or header_hits):
+            return
+        notes = [f"Bypass technique: {technique}."]
+        if reflected_location:
+            notes.append(f"Marker reflected in 'Location': {location}")
+        if reflected_body:
+            notes.append("Marker reflected in response body.")
+        if header_hits:
+            notes.append(f"Marker reflected in header(s): {header_hits}")
+        self.record({
+            "url": self.target_url,
+            "method": "GET",
+            "header_name": technique,
+            "payload": request_line,
+            "status_code": response.status_code,
+            "analysis": " ".join(notes),
+        })
+
+
+class CachePoisoningTest(BaseTest):
+    """Confirm web cache poisoning, not just reflection.
+
+    For each candidate unkeyed header, a unique cache-buster is added to the
+    URL, a poisoning request is sent, and then the same URL is requested again
+    *without* the malicious header. If the injected marker survives into the
+    clean request, the response was cached - a confirmed poisoning.
+    """
+
+    test_type = "Web Cache Poisoning"
+
+    def run(self):
+        cases = [(header,) for header in UNKEYED_HOST_HEADERS]
+        self.run_pool(self.worker, cases, "Web Cache Poisoning Testing")
+
+    def _url_with_buster(self, buster):
+        parsed = urlparse(self.target_url)
+        query = parse_qs(parsed.query)
+        query["cb"] = buster
+        return parsed._replace(query=urlencode(query, doseq=True)).geturl()
+
+    def worker(self, header_name):
+        buster = uuid.uuid4().hex[:10]
+        token = uuid.uuid4().hex[:12]
+        marker = f"{token}.example-collab.com"
+        url = self._url_with_buster(buster)
+
+        poison = self.request("GET", url=url, headers={header_name: marker},
+                              allow_redirects=False)
+        if poison is None:
+            return
+        if token not in (poison.text or "") and token not in poison.headers.get("Location", ""):
+            return  # not reflected, nothing to cache
+
+        # Re-request the identical (cache-buster) URL without the header.
+        confirm = self.request("GET", url=url, allow_redirects=False)
+        if confirm is None:
+            return
+        cache_info = {h: confirm.headers[h] for h in CACHE_STATUS_HEADERS
+                      if h in confirm.headers}
+        poisoned = token in (confirm.text or "") or token in confirm.headers.get("Location", "")
+
+        if poisoned:
+            self.record({
+                "url": url,
+                "method": "GET",
+                "header_name": header_name,
+                "payload": marker,
+                "status_code": confirm.status_code,
+                "analysis": (
+                    f"CONFIRMED: '{header_name}' is unkeyed and the poisoned "
+                    f"response was served to a clean request. Cache headers: "
+                    f"{cache_info or 'n/a'}."
+                ),
+                "test_result": "Vulnerable",
+            })
+        elif self.verbose == 2:
+            self.all_results.append({
+                "test_type": self.test_type,
+                "url": url,
+                "method": "GET",
+                "header_name": header_name,
+                "payload": marker,
+                "status_code": poison.status_code,
+                "analysis": (
+                    f"Reflected via '{header_name}' but not served from cache "
+                    f"on re-request (cache headers: {cache_info or 'n/a'})."
+                ),
+                "test_result": "Reflected (unconfirmed)",
+            })
+
+
+class AuthBypassTest(BaseTest):
+    """Detect Host/forwarding-based access-control bypasses.
+
+    If the target responds 401/403, retry it presenting an internal/trusted
+    host or client IP; a transition to 200 (or a materially different body)
+    signals a bypass. Also probes front-end path-override headers
+    (X-Original-URL / X-Rewrite-URL) used to reach restricted endpoints.
+    """
+
+    test_type = "Auth Bypass"
+
+    INTERNAL_VALUES = {
+        "Host": ["localhost", "127.0.0.1"],
+        "X-Forwarded-Host": ["localhost", "127.0.0.1"],
+        "X-Forwarded-For": ["127.0.0.1"],
+        "X-Real-IP": ["127.0.0.1"],
+        "True-Client-IP": ["127.0.0.1"],
+        "X-Forwarded-Server": ["localhost"],
+    }
+
+    def run(self):
+        baseline = self.request("GET", allow_redirects=False)
+        if baseline is None:
+            return
+        self.baseline_status = baseline.status_code
+        self.baseline_len = len(baseline.content)
+
+        cases = []
+        if baseline.status_code in (401, 403):
+            for header, values in self.INTERNAL_VALUES.items():
+                for value in values:
+                    cases.append(("host", header, value))
+        for header in PATH_OVERRIDE_HEADERS:
+            cases.append(("path", header, urlparse(self.target_url).path or "/"))
+        self.run_pool(self.worker, cases, "Auth Bypass Testing")
+
+    def worker(self, mode, header_name, value):
+        if mode == "path":
+            # Request the site root but ask the front-end to route to the path.
+            parsed = urlparse(self.target_url)
+            root = parsed._replace(path="/", query="").geturl()
+            response = self.request("GET", url=root,
+                                    headers={header_name: value},
+                                    allow_redirects=False)
+        else:
+            response = self.request("GET", headers={header_name: value},
+                                    allow_redirects=False)
+        if response is None:
+            return
+
+        improved = (
+            self.baseline_status in (401, 403)
+            and response.status_code == 200
+        )
+        if not improved:
+            return
+        self.record({
+            "url": self.target_url,
+            "method": "GET",
+            "header_name": header_name,
+            "payload": value,
+            "status_code": response.status_code,
+            "analysis": (
+                f"Access control bypass: baseline returned "
+                f"{self.baseline_status}, but '{header_name}: {value}' "
+                f"returned {response.status_code}."
+            ),
+            "test_result": "Vulnerable",
+        })
+
+
 def parse_headers(raw_headers):
     headers = {}
     for item in raw_headers or []:
@@ -662,6 +1028,9 @@ def main():
 
     tests = [
         HostInjectionTest(args.url, hostname, **common),
+        HostBypassTest(args.url, hostname, **common),
+        CachePoisoningTest(args.url, hostname, **common),
+        AuthBypassTest(args.url, hostname, **common),
         SSRFTest(args.url, hostname, **common),
         URLParameterTest(args.url, hostname, **common),
         OpenRedirectTest(args.url, hostname, **common),
