@@ -2,6 +2,7 @@
 """HostHeaderScanner - detect Host header injection, SSRF and open redirect issues."""
 
 import argparse
+import hashlib
 import json
 import re
 import socket
@@ -26,7 +27,7 @@ init(autoreset=True)
 
 # Program metadata
 __tool_name__ = "HostHeaderScanner"
-__version__ = "1.8.1"
+__version__ = "1.9.0"
 __github_url__ = "https://github.com/kabiri-labs/HostHeaderScanner"
 
 # Process exit codes, chosen so CI pipelines can gate on the outcome:
@@ -88,6 +89,107 @@ def determine_exit_code(total_findings, stats):
     if stats is not None and stats.all_failed:
         return EXIT_ERROR
     return EXIT_FINDINGS if total_findings > 0 else EXIT_OK
+
+
+# Default severity per finding type, used for triage and for the SARIF
+# `security-severity` score that code-scanning platforms consume.
+SEVERITY_BY_TEST = {
+    "Host Header Injection": "Medium",
+    "Host Header Bypass": "High",
+    "Web Cache Poisoning": "High",
+    "Auth Bypass": "High",
+    "Virtual Host Discovery": "Low",
+    "SSRF": "High",
+    "URL Parameter SSRF": "High",
+    "Open Redirect": "Medium",
+    "Blind SSRF (OOB)": "High",
+}
+DEFAULT_SEVERITY = "Medium"
+
+# Maps a severity band onto (SARIF result level, GitHub security-severity score).
+SEVERITY_META = {
+    "Critical": ("error", "9.5"),
+    "High": ("error", "8.0"),
+    "Medium": ("warning", "5.0"),
+    "Low": ("note", "3.0"),
+    "Info": ("note", "1.0"),
+}
+
+
+def severity_for(test_type):
+    """Return the default severity band for a finding type."""
+    return SEVERITY_BY_TEST.get(test_type, DEFAULT_SEVERITY)
+
+
+def _rule_id(test_type):
+    """Turn a human test-type name into a stable SARIF rule id slug."""
+    return re.sub(r"[^a-z0-9]+", "-", test_type.lower()).strip("-") or "finding"
+
+
+def _fingerprint(*parts):
+    """Stable fingerprint so a platform can de-duplicate recurring findings."""
+    raw = "|".join(str(part) for part in parts)
+    return hashlib.sha1(raw.encode("utf-8", "ignore")).hexdigest()
+
+
+def build_sarif(results, version=None):
+    """Build a SARIF 2.1.0 log from the collected findings.
+
+    The format is understood by GitHub code scanning and most security
+    dashboards, letting the scanner plug into a product pipeline directly.
+    """
+    version = version or __version__
+    rules = {}
+    sarif_results = []
+    for result in results:
+        test_type = result.get("test_type", "Finding")
+        rule_id = _rule_id(test_type)
+        severity = result.get("severity") or severity_for(test_type)
+        level, score = SEVERITY_META.get(severity, SEVERITY_META[DEFAULT_SEVERITY])
+        if rule_id not in rules:
+            rules[rule_id] = {
+                "id": rule_id,
+                "name": re.sub(r"\s+", "", test_type) or "Finding",
+                "shortDescription": {"text": test_type},
+                "properties": {"security-severity": score, "tags": ["security"]},
+            }
+        location = result.get("url") or ""
+        header_or_param = result.get("header_name") or result.get("param_name") or ""
+        entry = {
+            "ruleId": rule_id,
+            "level": level,
+            "message": {"text": result.get("analysis") or test_type},
+            "properties": {
+                "security-severity": score,
+                "severity": severity,
+                "method": result.get("method", ""),
+                "payload": result.get("payload", ""),
+                "header_or_parameter": header_or_param,
+                "status_code": result.get("status_code", ""),
+            },
+            "partialFingerprints": {
+                "hostHeaderScanner/v1": _fingerprint(
+                    test_type, header_or_param, result.get("payload", ""), location),
+            },
+        }
+        if location:
+            entry["locations"] = [{
+                "physicalLocation": {"artifactLocation": {"uri": location}},
+            }]
+        sarif_results.append(entry)
+    return {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {"driver": {
+                "name": __tool_name__,
+                "version": version,
+                "informationUri": __github_url__,
+                "rules": list(rules.values()),
+            }},
+            "results": sarif_results,
+        }],
+    }
 
 
 def build_session(timeout, threads, insecure, proxy, extra_headers):
@@ -264,13 +366,15 @@ class BaseTest:
         """Store a confirmed/suspected finding and optionally print it."""
         entry.setdefault("test_type", self.test_type)
         entry.setdefault("test_result", "Potentially Vulnerable")
+        entry.setdefault("severity", severity_for(entry["test_type"]))
         entry["repro"] = build_reproduction(entry, self.target_url, self.insecure)
         self.vulnerabilities_found.append(entry)
         if self.verbose >= 1:
             self._print_finding(entry)
 
     def _print_finding(self, entry):
-        print(Fore.RED + Style.BRIGHT + f"\n[!] {entry['test_type']} Finding!")
+        print(Fore.RED + Style.BRIGHT +
+              f"\n[!] {entry['test_type']} Finding! [{entry.get('severity', '')}]")
         print(f"URL: {entry.get('url')}")
         print(f"Method: {entry.get('method')}")
         if entry.get("header_name"):
@@ -1263,7 +1367,11 @@ def parse_headers(raw_headers):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Host Header Injection Testing Tool")
-    parser.add_argument("url", help="Target URL")
+    parser.add_argument("url", nargs="?",
+                        help="Target URL (omit when using --list)")
+    parser.add_argument("--list", "-l", dest="list",
+                        help="File of target URLs to scan, one per line "
+                             "(blank lines and '#' comments are ignored)")
     parser.add_argument("--oob", help="OOB/collaborator domain for SSRF correlation")
     parser.add_argument("--oob-poll-url", dest="oob_poll_url",
                         help="Listener export URL polled afterwards to confirm OOB hits")
@@ -1283,21 +1391,27 @@ def parse_arguments():
     parser.add_argument("--quiet", "-q", action="store_true",
                         help="Suppress progress bars and status output "
                              "(auto-enabled when stdout is not a TTY)")
-    parser.add_argument("--output", "-o", help="Output file (.json or .md)")
+    parser.add_argument("--output", "-o",
+                        help="Output file (.json, .sarif or .md)")
     args = parser.parse_args()
     if not 1 <= args.threads <= 20:
         parser.error("The --threads argument must be between 1 and 20.")
+    if not args.url and not args.list:
+        parser.error("Provide a target URL or --list <file>.")
     return args
 
 
 def save_results(output_file, tests, verbose):
-    if not output_file:
+    if not output_file or not tests:
         return
     extension = output_file.rsplit(".", 1)[-1].lower()
     results = []
     for test in tests:
         results.extend(test.all_results if verbose == 2 else [])
         results.extend(test.vulnerabilities_found)
+    # Ensure every result carries a severity so JSON/SARIF/Markdown agree.
+    for result in results:
+        result.setdefault("severity", severity_for(result.get("test_type", "")))
 
     if extension == "json":
         with open(output_file, "w") as handle:
@@ -1305,9 +1419,18 @@ def save_results(output_file, tests, verbose):
         print(f"\nResults saved to {output_file}")
         return
 
+    if extension == "sarif":
+        with open(output_file, "w") as handle:
+            json.dump(build_sarif(results), handle, indent=2)
+        print(f"\nSARIF report saved to {output_file}")
+        return
+
+    targets = sorted({test.target_url for test in tests})
+    target_line = (targets[0] if len(targets) == 1
+                   else f"{len(targets)} targets ({', '.join(targets)})")
     lines = [
         "# Host Header Injection Testing Report",
-        f"**Target URL:** {tests[0].target_url}",
+        f"**Target(s):** {target_line}",
         f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"**Total Findings:** {sum(len(t.vulnerabilities_found) for t in tests)}\n",
     ]
@@ -1315,8 +1438,10 @@ def save_results(output_file, tests, verbose):
         lines.append("## Test Results\n")
         for result in results:
             lines.extend([
-                f"### {result['test_type']}: {result['test_result']}",
+                f"### {result['test_type']}: {result['test_result']} "
+                f"({result.get('severity', DEFAULT_SEVERITY)})",
                 f"- **URL:** {result['url']}",
+                f"- **Severity:** {result.get('severity', DEFAULT_SEVERITY)}",
                 f"- **Method:** {result['method']}",
                 f"- **Headers:** {result.get('headers', {})}",
                 f"- **Parameter:** {result.get('param_name', '')}",
@@ -1364,6 +1489,7 @@ def confirm_oob_interactions(oob_manager, session, timeout, tests):
         owner.vulnerabilities_found.append({
             "test_type": "Blind SSRF (OOB)",
             "test_result": "Vulnerable",
+            "severity": severity_for("Blind SSRF (OOB)"),
             "url": owner.target_url,
             "method": "GET",
             "header_name": label,
@@ -1379,6 +1505,91 @@ def confirm_oob_interactions(oob_manager, session, timeout, tests):
               f"[!] OOB interaction confirmed for '{label}' payload -> blind SSRF.")
 
 
+def load_targets(args):
+    """Resolve the target URLs from --list (a file) or the positional argument."""
+    if args.list:
+        targets = load_wordlist(args.list)
+        if not targets:
+            print(Fore.RED + f"No targets found in list file '{args.list}'.")
+            sys.exit(EXIT_ERROR)
+        return targets
+    return [args.url]
+
+
+def scan_target(url, args, session, methods, wordlist, stats):
+    """Run every test against a single URL and return the test objects.
+
+    Returns None for an invalid URL so a batch run can skip it and continue.
+    """
+    hostname = urlparse(url).hostname
+    if not hostname:
+        print(Fore.YELLOW + f"Skipping invalid URL: {url}")
+        return None
+
+    oob_manager = OOBManager(args.oob, args.oob_poll_url) if args.oob else None
+    status(f"\nTarget URL: {url}")
+    status(f"Original Host: {hostname}")
+    if oob_manager:
+        status(f"OOB domain: {args.oob} (scan id {oob_manager.scan_id}).")
+
+    common = dict(session=session, oob_domain=args.oob, methods=methods,
+                  threads=args.threads, verbose=args.verbose, timeout=args.timeout,
+                  oob_manager=oob_manager, wordlist=wordlist, insecure=args.insecure,
+                  stats=stats, quiet=_QUIET)
+    tests = [
+        HostInjectionTest(url, hostname, **common),
+        HostBypassTest(url, hostname, **common),
+        CachePoisoningTest(url, hostname, **common),
+        AuthBypassTest(url, hostname, **common),
+        VhostDiscoveryTest(url, hostname, **common),
+        SSRFTest(url, hostname, **common),
+        URLParameterTest(url, hostname, **common),
+        OpenRedirectTest(url, hostname, **common),
+    ]
+    for test in tests:
+        test.run()
+    if oob_manager and oob_manager.poll_url:
+        status("\nPolling OOB listener for interactions...")
+        confirm_oob_interactions(oob_manager, session, args.timeout, tests)
+    return tests
+
+
+def print_summary(all_tests, targets, stats):
+    """Print the aggregate summary and return the total finding count."""
+    total_vulns = sum(len(test.vulnerabilities_found) for test in all_tests)
+    scanned = len({test.target_url for test in all_tests})
+    print(Fore.CYAN + Style.BRIGHT + "\n========== Test Summary ==========")
+    print(Fore.CYAN + f"Targets scanned: {scanned}/{len(targets)}")
+    print(Fore.CYAN + f"Requests: {stats.succeeded}/{stats.total} succeeded "
+          f"({stats.failed} failed).")
+    print(Fore.CYAN + f"Total findings: {total_vulns}")
+
+    by_type = {}
+    for test in all_tests:
+        for vuln in test.vulnerabilities_found:
+            by_type.setdefault(test.test_type, []).append(vuln)
+    for test_type, vulns in by_type.items():
+        print(Fore.MAGENTA + Style.BRIGHT + f"\n--- {test_type} ---")
+        for vuln in vulns:
+            print(Fore.RED + f"- [{vuln.get('severity', '')}] "
+                  f"{vuln['method']} {vuln['url']}")
+            print(f"  Header/Parameter: {vuln.get('header_name') or vuln.get('param_name')}")
+            print(f"  Payload: {vuln['payload']}")
+            print(Fore.YELLOW + f"  Analysis: {vuln['analysis']}")
+            print(Fore.RED + "-" * 80)
+
+    # An unreachable target must not be reported as a clean result: every issued
+    # request failing means the findings list is empty for the wrong reason.
+    if stats.all_failed:
+        print(Fore.RED + Style.BRIGHT +
+              "\n[!] Every request failed - the target(s) appear unreachable. "
+              "Results are inconclusive, not a clean bill of health.")
+    elif total_vulns == 0:
+        print(Fore.GREEN + "No vulnerabilities were found.")
+    print(Fore.CYAN + "=" * 35)
+    return total_vulns
+
+
 def main():
     args = parse_arguments()
 
@@ -1392,27 +1603,15 @@ def main():
     status(Fore.CYAN + Style.BRIGHT + f"{__tool_name__} {__version__}")
     status(Fore.CYAN + f"GitHub: {__github_url__}\n")
 
-    parsed_url = urlparse(args.url)
-    hostname = parsed_url.hostname
-    if not hostname:
-        print(Fore.RED + "Invalid URL provided.")
-        sys.exit(EXIT_ERROR)
-
+    targets = load_targets(args)
     methods = [m.strip().upper() for m in args.methods.split(",") if m.strip()]
     extra_headers = parse_headers(args.headers)
     wordlist = load_wordlist(args.wordlist)
-    oob_manager = OOBManager(args.oob, args.oob_poll_url) if args.oob else None
 
-    status(f"Target URL: {args.url}")
-    status(f"Original Host: {hostname}")
+    status(f"Targets: {len(targets)}")
     status(f"Methods: {', '.join(methods)}")
     status(f"Using {args.threads} threads (timeout {args.timeout}s).")
-    status(f"Verbosity level set to {args.verbose}.")
-    if oob_manager:
-        status(f"OOB domain: {args.oob} (scan id {oob_manager.scan_id}).")
-        status("Poll URL: " + (args.oob_poll_url or "not set (manual correlation)") + "\n")
-    else:
-        status("No OOB domain provided.\n")
+    status(f"Verbosity level set to {args.verbose}.\n")
 
     session = build_session(
         timeout=args.timeout,
@@ -1423,61 +1622,25 @@ def main():
     )
 
     stats = RequestStats()
-    common = dict(session=session, oob_domain=args.oob, methods=methods,
-                  threads=args.threads, verbose=args.verbose, timeout=args.timeout,
-                  oob_manager=oob_manager, wordlist=wordlist, insecure=args.insecure,
-                  stats=stats, quiet=_QUIET)
-
-    tests = [
-        HostInjectionTest(args.url, hostname, **common),
-        HostBypassTest(args.url, hostname, **common),
-        CachePoisoningTest(args.url, hostname, **common),
-        AuthBypassTest(args.url, hostname, **common),
-        VhostDiscoveryTest(args.url, hostname, **common),
-        SSRFTest(args.url, hostname, **common),
-        URLParameterTest(args.url, hostname, **common),
-        OpenRedirectTest(args.url, hostname, **common),
-    ]
-
+    all_tests = []
     try:
-        for test in tests:
-            test.run()
+        for url in targets:
+            if len(targets) > 1:
+                status(Fore.CYAN + Style.BRIGHT + f"\n===== Scanning {url} =====")
+            tests = scan_target(url, args, session, methods, wordlist, stats)
+            if tests:
+                all_tests.extend(tests)
     except KeyboardInterrupt:
         print(Fore.YELLOW + "\n[!] Program interrupted by user.")
-        save_results(args.output, tests, args.verbose)
+        save_results(args.output, all_tests, args.verbose)
         sys.exit(EXIT_ERROR)
 
-    if oob_manager and oob_manager.poll_url:
-        status("\nPolling OOB listener for interactions...")
-        confirm_oob_interactions(oob_manager, session, args.timeout, tests)
+    if not all_tests:
+        print(Fore.RED + "No valid targets were scanned.")
+        return EXIT_ERROR
 
-    save_results(args.output, tests, args.verbose)
-
-    total_vulns = sum(len(test.vulnerabilities_found) for test in tests)
-    print(Fore.CYAN + Style.BRIGHT + "\n========== Test Summary ==========")
-    print(Fore.CYAN + f"Requests: {stats.succeeded}/{stats.total} succeeded "
-          f"({stats.failed} failed).")
-    print(Fore.CYAN + f"Total findings: {total_vulns}")
-    for test in tests:
-        if test.vulnerabilities_found:
-            print(Fore.MAGENTA + Style.BRIGHT + f"\n--- {test.test_type} ---")
-            for vuln in test.vulnerabilities_found:
-                print(Fore.RED + f"- {vuln['method']} {vuln['url']}")
-                print(f"  Header/Parameter: {vuln.get('header_name') or vuln.get('param_name')}")
-                print(f"  Payload: {vuln['payload']}")
-                print(Fore.YELLOW + f"  Analysis: {vuln['analysis']}")
-                print(Fore.RED + "-" * 80)
-
-    # An unreachable target must not be reported as a clean result: every issued
-    # request failing means the findings list is empty for the wrong reason.
-    if stats.all_failed:
-        print(Fore.RED + Style.BRIGHT +
-              "\n[!] Every request failed - the target appears unreachable. "
-              "Results are inconclusive, not a clean bill of health.")
-    elif total_vulns == 0:
-        print(Fore.GREEN + "No vulnerabilities were found.")
-    print(Fore.CYAN + "=" * 35)
-
+    save_results(args.output, all_tests, args.verbose)
+    total_vulns = print_summary(all_tests, targets, stats)
     return determine_exit_code(total_vulns, stats)
 
 
