@@ -1,5 +1,6 @@
-# HostHeaderScanner v1.6.0
+# HostHeaderScanner v1.7.0
 
+[![Version](https://img.shields.io/badge/version-1.7.0-brightgreen.svg)](host_header_scanner.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HostHeaderScanner.svg?style=social&label=Star)](https://github.com/kabiri-labs/HostHeaderScanner)
@@ -232,23 +233,29 @@ Contributions are welcome! Please follow these steps:
    git checkout -b feature/YourFeature
    ```
 
-4. **Make Changes**: Add your improvements or fixes.
+4. **Make Changes**: Add your improvements or fixes, together with matching tests.
 
-5. **Commit Changes**: Commit your changes with a descriptive message.
+5. **Run the Tests**: The unit tests are fully offline (no network access required).
+
+   ```bash
+   python -m unittest discover -s tests
+   ```
+
+6. **Commit Changes**: Commit your changes with a descriptive message.
 
    ```bash
    git commit -m "Add new feature to improve scanning speed"
    ```
 
-6. **Push to GitHub**: Push your changes to your forked repository.
+7. **Push to GitHub**: Push your changes to your forked repository.
 
    ```bash
    git push origin feature/YourFeature
    ```
 
-7. **Open a Pull Request**: Navigate to the original repository and click on "New Pull Request".
+8. **Open a Pull Request**: Navigate to the original repository and click on "New Pull Request".
 
-Please ensure your code adheres to the existing style and includes appropriate error handling.
+Please ensure your code adheres to the existing style, includes appropriate error handling, and keeps the test suite green.
 
 ---
 

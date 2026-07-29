@@ -25,7 +25,7 @@ init(autoreset=True)
 
 # Program metadata
 __tool_name__ = "HostHeaderScanner"
-__version__ = "1.6.0"
+__version__ = "1.7.0"
 __github_url__ = "https://github.com/kabiri-labs/HostHeaderScanner"
 
 
