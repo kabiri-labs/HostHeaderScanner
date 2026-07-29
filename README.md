@@ -1,6 +1,6 @@
-# HostHeaderScanner v1.8.0
+# HostHeaderScanner v1.8.1
 
-[![Version](https://img.shields.io/badge/version-1.8.0-brightgreen.svg)](host_header_scanner.py)
+[![Version](https://img.shields.io/badge/version-1.8.1-brightgreen.svg)](host_header_scanner.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HostHeaderScanner.svg?style=social&label=Star)](https://github.com/kabiri-labs/HostHeaderScanner)
@@ -31,10 +31,10 @@
 - **Raw HTTP Validation Bypasses**: Uses a built-in raw HTTP/1.1 client (not `requests`) to send malformed requests that bypass Host validation: **duplicate `Host` headers**, **absolute-URI request lines**, **indented (line-folded) headers** and host overrides.
 - **Confirmed Web Cache Poisoning**: Adds a unique cache-buster, sends a poisoning request via unkeyed headers, then re-requests the same URL *without* the header. A surviving marker confirms the response is cached and served to other users, and `X-Cache`/`Age`/`CF-Cache-Status` are reported.
 - **Host-based Access Control Bypass**: Detects 401/403 endpoints that become reachable when presenting an internal host or client IP (`Host: localhost`, `X-Forwarded-For: 127.0.0.1`, ...), plus front-end path-override headers (`X-Original-URL`, `X-Rewrite-URL`).
-- **Virtual Host Discovery**: Brute-forces internal/hidden virtual hosts through the `Host` header against a built-in or custom wordlist, flagging hosts whose status, length or page title differ from the default virtual host.
+- **Virtual Host Discovery**: Brute-forces internal/hidden virtual hosts through the `Host` header against a built-in or custom wordlist. It samples the default virtual host several times to learn its natural page-to-page variance, then only reports a candidate whose status, length or title difference is **confirmed on a second probe** — so dynamic content does not masquerade as a hidden host.
 - **Real OOB Confirmation**: Embeds a per-scan correlation id into out-of-band payloads and, given a listener export URL (`--oob-poll-url`), polls it to confirm blind SSRF interactions. Works with interactsh, webhook.site, RequestBin, Burp Collaborator exports and custom sinks.
 - **Copy-paste Reproduction**: Every finding includes a ready-to-run reproduction command — `curl` for header/parameter issues and a `printf | ncat` / `openssl s_client` wire-level command for raw bypasses.
-- **SSRF Detection**: Combines response-time deviation, internal-target indicators and header anomalies behind a weighted scoring model to reduce false positives.
+- **SSRF Detection**: Combines response-time deviation, internal-target indicators and header anomalies behind a weighted scoring model. Header anomalies are measured against headers proven stable across baseline samples — per-request identifiers (request ids, tracing, `CF-RAY`, nonces) are learned as volatile and ignored, cutting false positives.
 - **Open Redirect Detection**: Flags redirects whose `Location` host matches an injected Host value.
 - **URL Parameter SSRF**: Probes common parameters (`url`, `next`, `redirect`, ...) against internal targets with baseline differencing.
 - **OOB Correlation**: Accepts an `--oob` domain that is embedded into payloads as a unique subdomain so interactions can be correlated on your own collaborator/listener.

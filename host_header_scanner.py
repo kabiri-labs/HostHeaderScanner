@@ -26,7 +26,7 @@ init(autoreset=True)
 
 # Program metadata
 __tool_name__ = "HostHeaderScanner"
-__version__ = "1.8.0"
+__version__ = "1.8.1"
 __github_url__ = "https://github.com/kabiri-labs/HostHeaderScanner"
 
 # Process exit codes, chosen so CI pipelines can gate on the outcome:
@@ -442,10 +442,20 @@ class SSRFTest(BaseTest):
 
     test_type = "SSRF"
 
-    EXCLUDED_HEADERS = {
+    # Headers that legitimately vary between two identical requests and must
+    # never be treated as an SSRF signal. Stored lower-cased for case-insensitive
+    # matching. Beyond this curated list, volatile headers are also learned
+    # empirically from the baseline samples (see compute_baseline).
+    EXCLUDED_HEADERS = frozenset(h.lower() for h in {
         "Date", "Server", "Content-Length", "Connection", "Vary",
         "Content-Type", "Set-Cookie", "Age", "Expires", "Last-Modified", "ETag",
-    }
+        # Per-request identifiers / tracing / cache metadata emitted by common
+        # CDNs, proxies and frameworks - always different, never SSRF evidence.
+        "X-Request-Id", "X-Request-ID", "X-Correlation-Id", "X-Trace-Id",
+        "X-Amz-Cf-Id", "X-Amz-Request-Id", "X-Amz-Id-2", "CF-RAY",
+        "X-Served-By", "X-Timer", "X-Cache", "X-Cache-Hits", "X-Runtime",
+        "Report-To", "NEL", "Keep-Alive", "X-Powered-By-Nonce", "CF-Cache-Status",
+    })
     # Indicators that strongly suggest the request reached an internal target.
     INDICATORS = {
         "root:x:0:0:": 5,
@@ -463,12 +473,24 @@ class SSRFTest(BaseTest):
         super().__init__(*args, **kwargs)
         self.typical_delay = None
         self.baseline_headers = {}
+        # Headers proven stable across the baseline samples (name -> value) and
+        # the set of header names that varied between otherwise identical
+        # requests. Only changes to *stable* headers count as an anomaly.
+        self.stable_baseline_headers = {}
+        self.volatile_headers = set()
         self.results = []
 
     def compute_baseline(self, samples=6):
-        """Measure a stable baseline latency and capture reference headers."""
+        """Measure a stable baseline latency and learn which headers are stable.
+
+        Collects headers from every successful baseline sample so that headers
+        which differ between identical requests (request ids, tracing, nonces)
+        can be classified as volatile and excluded from anomaly detection - the
+        dominant source of false-positive SSRF findings.
+        """
         status("\nComputing baseline latency...")
         delays = []
+        header_samples = []
         for i in range(samples):
             start = time.time()
             response = self.request("GET")
@@ -476,10 +498,10 @@ class SSRFTest(BaseTest):
                 status(f"Request {i + 1} failed.")
                 continue
             elapsed = time.time() - start
-            if i == 0:
-                self.baseline_headers = response.headers  # warm-up sample
-            else:
+            header_samples.append(dict(response.headers))
+            if i > 0:  # first sample is a warm-up, excluded from latency stats
                 delays.append(elapsed)
+        self._learn_header_stability(header_samples)
         if delays:
             delays.sort()
             trimmed = delays[1:-1] if len(delays) > 2 else delays
@@ -488,6 +510,27 @@ class SSRFTest(BaseTest):
         else:
             self.typical_delay = 1.0
             status("Could not measure latency; defaulting to 1.00s.")
+
+    def _learn_header_stability(self, header_samples):
+        """Partition baseline headers into stable (constant) and volatile."""
+        self.stable_baseline_headers = {}
+        self.volatile_headers = set()
+        if not header_samples:
+            self.baseline_headers = {}
+            return
+        self.baseline_headers = dict(header_samples[0])
+        names = set()
+        for sample in header_samples:
+            names.update(sample.keys())
+        for name in names:
+            values = [sample.get(name) for sample in header_samples]
+            present_in_all = all(value is not None for value in values)
+            constant = len(set(values)) == 1
+            if present_in_all and constant:
+                self.stable_baseline_headers[name] = values[0]
+            else:
+                # Absent from some samples or changing value -> volatile.
+                self.volatile_headers.add(name.lower())
 
     def generate_payloads(self):
         internal_hosts = [
@@ -599,17 +642,25 @@ class SSRFTest(BaseTest):
                 })
 
     def detect_header_anomalies(self, response_headers):
-        if not self.baseline_headers:
+        """Flag only meaningful header changes versus the *stable* baseline.
+
+        Headers that are curated-dynamic or that were observed to vary across
+        the baseline samples are ignored, so per-request identifiers no longer
+        masquerade as SSRF evidence.
+        """
+        if not self.stable_baseline_headers:
             return []
         anomalies = []
         for header, value in response_headers.items():
-            if header in self.EXCLUDED_HEADERS:
+            lowered = header.lower()
+            if lowered in self.EXCLUDED_HEADERS or lowered in self.volatile_headers:
                 continue
-            baseline_value = self.baseline_headers.get(header)
-            if baseline_value is None:
+            if header in self.stable_baseline_headers:
+                if value != self.stable_baseline_headers[header]:
+                    anomalies.append(f"'{header}' changed")
+            else:
+                # A header absent from every baseline sample yet appearing now.
                 anomalies.append(f"new header '{header}'")
-            elif value != baseline_value:
-                anomalies.append(f"'{header}' changed")
         return anomalies
 
 
@@ -1104,16 +1155,37 @@ class VhostDiscoveryTest(BaseTest):
         match = re.search(r"<title[^>]*>(.*?)</title>", text or "", re.I | re.S)
         return match.group(1).strip()[:80] if match else ""
 
+    # How many times the non-existent (default vhost) baseline is sampled, and
+    # the smallest body-length delta that is ever allowed to count as different.
+    BASELINE_SAMPLES = 3
+    MIN_LENGTH_DELTA = 256
+
+    def _measure(self, host):
+        """Return (status, body_length, title) for a Host header, or None."""
+        response = self.request("GET", headers={"Host": host}, allow_redirects=False)
+        if response is None:
+            return None
+        return response.status_code, len(response.content), self._title(response.text)
+
     def run(self):
         candidates = self.wordlist or DEFAULT_VHOST_WORDLIST
         bogus = f"{uuid.uuid4().hex[:16]}.invalid"
-        baseline = self.request("GET", headers={"Host": bogus}, allow_redirects=False)
-        if baseline is None:
+        samples = [m for m in (self._measure(bogus)
+                               for _ in range(self.BASELINE_SAMPLES))
+                   if m is not None]
+        if not samples:
             print(Fore.YELLOW + "Vhost baseline failed; skipping discovery.")
             return
-        self.baseline_status = baseline.status_code
-        self.baseline_len = len(baseline.content)
-        self.baseline_title = self._title(baseline.text)
+        lengths = [length for _, length, _ in samples]
+        self.baseline_status = samples[0][0]
+        self.baseline_len = statistics.mean(lengths)
+        self.baseline_titles = {title for _, _, title in samples}
+        # Tolerance absorbs the default vhost's own page-to-page variance, so
+        # dynamic content (timestamps, tokens, ads) is not mistaken for a new
+        # virtual host.
+        observed_spread = max(lengths) - min(lengths)
+        self.len_tolerance = max(self.MIN_LENGTH_DELTA, observed_spread * 2,
+                                 0.25 * self.baseline_len)
         self.run_pool(self.worker, [(c,) for c in candidates], "Virtual Host Discovery")
 
     def candidate_hosts(self, candidate):
@@ -1123,31 +1195,57 @@ class VhostDiscoveryTest(BaseTest):
             f"{candidate}.internal",
         ]
 
+    def _distinct_signal(self, first, second):
+        """Explain why two probes agree a Host is a distinct vhost, else None.
+
+        Requiring both probes to agree filters out responses that differ from
+        the baseline only because the page itself changes between requests.
+        """
+        status1, len1, title1 = first
+        status2, len2, title2 = second
+        if status1 == status2 != self.baseline_status:
+            return f"status {status1} (baseline {self.baseline_status})"
+        if title1 and title1 == title2 and title1 not in self.baseline_titles:
+            return f"title '{title1}'"
+        # Body length consistently (both probes, and mutually consistent) outside
+        # the baseline's natural variance.
+        if (abs(len1 - self.baseline_len) > self.len_tolerance
+                and abs(len2 - self.baseline_len) > self.len_tolerance
+                and abs(len1 - len2) <= self.len_tolerance):
+            return (f"body length ~{int((len1 + len2) / 2)}B vs baseline "
+                    f"~{int(self.baseline_len)}B")
+        return None
+
     def worker(self, candidate):
         for host in self.candidate_hosts(candidate):
-            response = self.request("GET", headers={"Host": host},
-                                    allow_redirects=False)
-            if response is None:
+            first = self._measure(host)
+            if first is None:
                 continue
-            length = len(response.content)
-            title = self._title(response.text)
-            differs = (
-                response.status_code != self.baseline_status
-                or abs(length - self.baseline_len) > max(64, 0.2 * self.baseline_len)
-                or (title and title != self.baseline_title)
+            status_code, length, title = first
+            # Cheap pre-filter: only pay for a confirming probe when the first
+            # already looks different from the baseline.
+            looks_different = (
+                status_code != self.baseline_status
+                or (title and title not in self.baseline_titles)
+                or abs(length - self.baseline_len) > self.len_tolerance
             )
-            if differs:
+            if not looks_different:
+                continue
+            second = self._measure(host)
+            if second is None:
+                continue
+            signal = self._distinct_signal(first, second)
+            if signal:
                 self.record({
                     "url": self.target_url,
                     "method": "GET",
                     "header_name": "Host",
                     "payload": host,
-                    "status_code": response.status_code,
+                    "status_code": status_code,
                     "analysis": (
-                        f"Distinct virtual host: default (unknown host) was "
-                        f"{self.baseline_status}/{self.baseline_len}B, '{host}' "
-                        f"returned {response.status_code}/{length}B"
-                        + (f", title '{title}'." if title else ".")
+                        f"Distinct virtual host confirmed on two probes: {signal}. "
+                        f"Default (unknown host) baseline was "
+                        f"{self.baseline_status}/~{int(self.baseline_len)}B."
                     ),
                 })
                 return  # one hit per candidate is sufficient
