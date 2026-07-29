@@ -1,6 +1,6 @@
-# HostHeaderScanner v1.8.1
+# HostHeaderScanner v1.9.0
 
-[![Version](https://img.shields.io/badge/version-1.8.1-brightgreen.svg)](host_header_scanner.py)
+[![Version](https://img.shields.io/badge/version-1.9.0-brightgreen.svg)](host_header_scanner.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HostHeaderScanner.svg?style=social&label=Star)](https://github.com/kabiri-labs/HostHeaderScanner)
@@ -41,7 +41,9 @@
 - **Multi-threaded Scanning**: Uses a bounded `ThreadPoolExecutor` with connection pooling and automatic retries.
 - **Flexible Requests**: Configurable HTTP methods, per-request timeout, custom headers, upstream proxy and optional TLS verification bypass.
 - **Customizable Verbosity**: Offers different levels of verbosity to control the amount of output.
-- **Exportable Reports**: Saves results in JSON or Markdown format for easy documentation.
+- **Severity-rated Findings**: Every finding carries a severity band (High / Medium / Low), shown in the console summary and every report format for quick triage.
+- **Exportable Reports**: Saves results as JSON, Markdown, or **SARIF 2.1.0** — the SARIF output includes per-rule `security-severity` scores and fingerprints, so it drops straight into GitHub code scanning or a security dashboard.
+- **Batch Scanning**: Scan a whole list of URLs in one run with `--list`, aggregating every target's findings into a single report and exit code.
 - **Graceful Interruption Handling**: Allows interruption with `Ctrl+C` and exits gracefully without data loss.
 
 ---
@@ -89,7 +91,8 @@ python host_header_scanner.py http://example.com
 
 ### Options
 
-- `<target_url>`: **(Required)** The target URL to scan.
+- `<target_url>`: The target URL to scan. Required unless `--list` is given.
+- `--list <file>` or `-l`: Scan every URL in a file (one per line; blank lines and `#` comments are ignored). Findings from all targets are aggregated into one report.
 - `--oob <domain>`: Specify an Out-of-Band (OOB) domain for advanced SSRF correlation.
 - `--oob-poll-url <url>`: Listener export URL polled after the scan to confirm OOB interactions.
 - `--wordlist <file>` or `-w`: Custom virtual-host wordlist for discovery (one name per line).
@@ -101,7 +104,7 @@ python host_header_scanner.py http://example.com
 - `--insecure` or `-k`: Disable TLS certificate verification.
 - `--verbose <level>`: Verbosity level (1 or 2). Level 2 provides more detailed output.
 - `--quiet` or `-q`: Suppress progress bars, colours and status chatter (only findings and the final summary are printed). Auto-enabled when stdout is not a TTY, so piped/CI logs stay clean.
-- `--output <file>` or `-o <file>`: Output file to save the test results (supports `.json` and `.md` extensions).
+- `--output <file>` or `-o <file>`: Output file to save the test results. The format is chosen by extension: `.json`, `.sarif` (SARIF 2.1.0 for GitHub code scanning / security dashboards) or `.md`.
 
 ### Exit Codes
 
@@ -126,6 +129,18 @@ fi
 ```
 
 ### Examples
+
+#### Scan a List of Targets
+
+```bash
+python host_header_scanner.py --list targets.txt -o report.json
+```
+
+#### Export SARIF for Code Scanning
+
+```bash
+python host_header_scanner.py https://example.com -o findings.sarif
+```
 
 #### Specify Number of Threads
 
