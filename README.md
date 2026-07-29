@@ -1,6 +1,6 @@
-# HostHeaderScanner v1.9.0
+# HostHeaderScanner v1.10.0
 
-[![Version](https://img.shields.io/badge/version-1.9.0-brightgreen.svg)](host_header_scanner.py)
+[![Version](https://img.shields.io/badge/version-1.10.0-brightgreen.svg)](host_header_scanner.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HostHeaderScanner.svg?style=social&label=Star)](https://github.com/kabiri-labs/HostHeaderScanner)
@@ -28,7 +28,7 @@
 ## Features
 
 - **Reflection-based Host Header Injection**: Injects a unique random marker host across `Host`, `X-Forwarded-Host`, `X-Forwarded-For`, `Forwarded` and 15+ other routing headers, then detects reflection in the response body, the `Location` header and other response headers. Because the marker is unique, findings are high-confidence (cache poisoning / password-reset poisoning / link poisoning).
-- **Raw HTTP Validation Bypasses**: Uses a built-in raw HTTP/1.1 client (not `requests`) to send malformed requests that bypass Host validation: **duplicate `Host` headers**, **absolute-URI request lines**, **indented (line-folded) headers** and host overrides.
+- **Raw HTTP Validation Bypasses**: Uses a built-in raw HTTP/1.1 client (not `requests`) to send malformed requests that bypass Host validation: **duplicate `Host` headers**, **absolute-URI request lines**, **indented (line-folded) headers** and host overrides. When `--proxy` is set, this raw traffic is tunnelled through the proxy with `CONNECT` (keeping the malformed request intact), so bypass tests are captured by Burp or any intercepting proxy just like the rest of the scan.
 - **Confirmed Web Cache Poisoning**: Adds a unique cache-buster, sends a poisoning request via unkeyed headers, then re-requests the same URL *without* the header. A surviving marker confirms the response is cached and served to other users, and `X-Cache`/`Age`/`CF-Cache-Status` are reported.
 - **Host-based Access Control Bypass**: Detects 401/403 endpoints that become reachable when presenting an internal host or client IP (`Host: localhost`, `X-Forwarded-For: 127.0.0.1`, ...), plus front-end path-override headers (`X-Original-URL`, `X-Rewrite-URL`).
 - **Virtual Host Discovery**: Brute-forces internal/hidden virtual hosts through the `Host` header against a built-in or custom wordlist. It samples the default virtual host several times to learn its natural page-to-page variance, then only reports a candidate whose status, length or title difference is **confirmed on a second probe** — so dynamic content does not masquerade as a hidden host.
@@ -100,7 +100,7 @@ python host_header_scanner.py http://example.com
 - `--timeout <seconds>`: Per-request timeout in seconds (default is 10).
 - `--methods <list>`: Comma-separated HTTP methods to test (default `GET`, e.g. `GET,POST`).
 - `--header <"Name: Value">` or `-H`: Add a custom request header. Repeatable.
-- `--proxy <url>`: Route traffic through an upstream proxy (e.g. `http://127.0.0.1:8080`).
+- `--proxy <url>`: Route traffic through an upstream proxy (e.g. `http://127.0.0.1:8080`), including the raw-HTTP bypass tests, which are tunnelled via `CONNECT`. Supports optional `user:pass@` basic auth.
 - `--insecure` or `-k`: Disable TLS certificate verification.
 - `--verbose <level>`: Verbosity level (1 or 2). Level 2 provides more detailed output.
 - `--quiet` or `-q`: Suppress progress bars, colours and status chatter (only findings and the final summary are printed). Auto-enabled when stdout is not a TTY, so piped/CI logs stay clean.

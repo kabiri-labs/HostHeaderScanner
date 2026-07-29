@@ -2,6 +2,7 @@
 """HostHeaderScanner - detect Host header injection, SSRF and open redirect issues."""
 
 import argparse
+import base64
 import hashlib
 import json
 import re
@@ -27,7 +28,7 @@ init(autoreset=True)
 
 # Program metadata
 __tool_name__ = "HostHeaderScanner"
-__version__ = "1.9.0"
+__version__ = "1.10.0"
 __github_url__ = "https://github.com/kabiri-labs/HostHeaderScanner"
 
 # Process exit codes, chosen so CI pipelines can gate on the outcome:
@@ -940,17 +941,77 @@ class RawHTTPClient:
     header validation bypasses.
     """
 
-    def __init__(self, timeout=10, verify=True, max_bytes=200_000):
+    def __init__(self, timeout=10, verify=True, max_bytes=200_000, proxy=None):
         self.timeout = timeout
         self.verify = verify
         self.max_bytes = max_bytes
+        self.proxy = self._parse_proxy(proxy)
+
+    @staticmethod
+    def _parse_proxy(proxy):
+        """Parse an HTTP proxy URL into its parts, or return None."""
+        if not proxy:
+            return None
+        parsed = urlparse(proxy if "://" in proxy else f"http://{proxy}")
+        if not parsed.hostname:
+            return None
+        return {
+            "host": parsed.hostname,
+            "port": parsed.port or 8080,
+            "username": parsed.username,
+            "password": parsed.password,
+        }
+
+    def _open_socket(self, host, port):
+        """Open a raw TCP socket to host:port, tunnelling via CONNECT if a proxy
+        is configured.
+
+        Tunnelling (rather than absolute-URI forwarding) is essential: it keeps
+        the malformed request line and duplicate headers intact end-to-end, so
+        the bypass techniques survive the trip through an intercepting proxy such
+        as Burp.
+        """
+        if not self.proxy:
+            return socket.create_connection((host, port), timeout=self.timeout)
+        sock = socket.create_connection((self.proxy["host"], self.proxy["port"]),
+                                        timeout=self.timeout)
+        lines = [f"CONNECT {host}:{port} HTTP/1.1", f"Host: {host}:{port}"]
+        if self.proxy["username"] is not None:
+            token = base64.b64encode(
+                f"{self.proxy['username']}:{self.proxy['password'] or ''}"
+                .encode("latin-1", "ignore")).decode("ascii")
+            lines.append(f"Proxy-Authorization: Basic {token}")
+        lines.append("Connection: keep-alive")
+        sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1", "ignore"))
+        if not self._read_connect_response(sock):
+            sock.close()
+            return None
+        return sock
+
+    def _read_connect_response(self, sock):
+        """Read the proxy's reply to CONNECT; return True on a 2xx tunnel."""
+        sock.settimeout(self.timeout)
+        buffer = b""
+        while b"\r\n\r\n" not in buffer and len(buffer) < 8192:
+            try:
+                chunk = sock.recv(1024)
+            except (socket.timeout, OSError):
+                return False
+            if not chunk:
+                return False
+            buffer += chunk
+        status_line = buffer.split(b"\r\n", 1)[0].decode("latin-1", "replace")
+        parts = status_line.split(" ", 2)
+        return len(parts) > 1 and parts[1].startswith("2")
 
     def send(self, scheme, host, port, request_line, header_lines, sni_host=None):
         request = request_line + "\r\n" + "\r\n".join(header_lines) + "\r\n\r\n"
         raw = b""
         sock = None
         try:
-            sock = socket.create_connection((host, port), timeout=self.timeout)
+            sock = self._open_socket(host, port)
+            if sock is None:
+                return None
             if scheme == "https":
                 context = ssl.create_default_context()
                 if not self.verify:
@@ -1016,11 +1077,19 @@ class HostBypassTest(BaseTest):
         self.path = parsed.path or "/"
         if parsed.query:
             self.path += "?" + parsed.query
-        self.client = RawHTTPClient(timeout=self.timeout, verify=not self._insecure())
+        self.client = RawHTTPClient(timeout=self.timeout,
+                                    verify=not self._insecure(),
+                                    proxy=self._proxy())
 
     def _insecure(self):
         # Mirror the verification mode chosen for the shared requests session.
         return self.session.verify is False
+
+    def _proxy(self):
+        # Reuse the proxy configured on the shared requests session so raw
+        # bypass traffic is captured by the same intercepting proxy (e.g. Burp).
+        proxies = getattr(self.session, "proxies", None) or {}
+        return proxies.get("https") or proxies.get("http")
 
     def base_lines(self, host_value):
         return [
