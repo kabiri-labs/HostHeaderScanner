@@ -1,6 +1,6 @@
-# HostHeaderScanner v1.7.0
+# HostHeaderScanner v1.8.0
 
-[![Version](https://img.shields.io/badge/version-1.7.0-brightgreen.svg)](host_header_scanner.py)
+[![Version](https://img.shields.io/badge/version-1.8.0-brightgreen.svg)](host_header_scanner.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HostHeaderScanner.svg?style=social&label=Star)](https://github.com/kabiri-labs/HostHeaderScanner)
@@ -100,7 +100,30 @@ python host_header_scanner.py http://example.com
 - `--proxy <url>`: Route traffic through an upstream proxy (e.g. `http://127.0.0.1:8080`).
 - `--insecure` or `-k`: Disable TLS certificate verification.
 - `--verbose <level>`: Verbosity level (1 or 2). Level 2 provides more detailed output.
+- `--quiet` or `-q`: Suppress progress bars, colours and status chatter (only findings and the final summary are printed). Auto-enabled when stdout is not a TTY, so piped/CI logs stay clean.
 - `--output <file>` or `-o <file>`: Output file to save the test results (supports `.json` and `.md` extensions).
+
+### Exit Codes
+
+The process exit code reflects the scan outcome, so it can gate a CI pipeline:
+
+| Code | Meaning |
+| ---- | ------- |
+| `0`  | Scan completed and **no** findings were reported. |
+| `1`  | Scan completed and **at least one** finding was reported. |
+| `2`  | The scan could not run meaningfully — invalid URL, interrupted, or the target was unreachable (every request failed). |
+
+An unreachable target is deliberately reported as code `2` (inconclusive), never as a clean `0`, so a host that never answered is not mistaken for a host with no vulnerabilities. The summary also prints a `Requests: <ok>/<total> succeeded` line so partial failures are visible.
+
+#### CI Example
+
+```bash
+python host_header_scanner.py https://example.com --quiet -o report.json
+if [ $? -eq 1 ]; then
+  echo "Host header findings detected — failing the build."
+  exit 1
+fi
+```
 
 ### Examples
 
