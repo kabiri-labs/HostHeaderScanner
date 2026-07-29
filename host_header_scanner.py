@@ -28,7 +28,7 @@ init(autoreset=True)
 
 # Program metadata
 __tool_name__ = "HostHeaderScanner"
-__version__ = "1.10.0"
+__version__ = "1.11.0"
 __github_url__ = "https://github.com/kabiri-labs/HostHeaderScanner"
 
 # Process exit codes, chosen so CI pipelines can gate on the outcome:
@@ -83,6 +83,35 @@ class RequestStats:
     def all_failed(self):
         """True when requests were attempted and every one of them failed."""
         return self.total > 0 and self.failed == self.total
+
+
+class RateLimiter:
+    """Global, thread-safe request pacer to stay under a rate cap.
+
+    A single instance is shared by every worker (and the raw HTTP client), so
+    the whole scan emits at most ``rate`` requests per second regardless of the
+    thread count - gentle enough to avoid tripping a WAF or rate-based blocking.
+    A rate of 0 (or less) disables pacing entirely.
+    """
+
+    def __init__(self, rate):
+        self.min_interval = 1.0 / rate if rate and rate > 0 else 0.0
+        self._lock = threading.Lock()
+        self._next_time = 0.0
+
+    def acquire(self):
+        """Block just long enough that requests stay spaced by ``min_interval``."""
+        if self.min_interval <= 0:
+            return
+        # Reserve this request's slot under the lock, then sleep outside it so
+        # other threads can reserve their (later) slots without serialising.
+        with self._lock:
+            now = time.monotonic()
+            scheduled = max(now, self._next_time)
+            self._next_time = scheduled + self.min_interval
+            wait = scheduled - now
+        if wait > 0:
+            time.sleep(wait)
 
 
 def determine_exit_code(total_findings, stats):
@@ -310,7 +339,7 @@ class BaseTest:
     def __init__(self, target_url, original_host, session, oob_domain=None,
                  methods=None, threads=5, verbose=1, timeout=10,
                  oob_manager=None, wordlist=None, insecure=False,
-                 stats=None, quiet=False):
+                 stats=None, quiet=False, rate_limiter=None):
         self.target_url = target_url
         self.original_host = original_host
         self.session = session
@@ -324,11 +353,14 @@ class BaseTest:
         self.timeout = timeout
         self.stats = stats
         self.quiet = quiet
+        self.rate_limiter = rate_limiter
         self.vulnerabilities_found = []
         self.all_results = []
 
     def request(self, method, url=None, headers=None, allow_redirects=True):
         """Issue a single request, returning the response or None on failure."""
+        if self.rate_limiter is not None:
+            self.rate_limiter.acquire()
         try:
             response = self.session.request(
                 method,
@@ -941,11 +973,13 @@ class RawHTTPClient:
     header validation bypasses.
     """
 
-    def __init__(self, timeout=10, verify=True, max_bytes=200_000, proxy=None):
+    def __init__(self, timeout=10, verify=True, max_bytes=200_000, proxy=None,
+                 rate_limiter=None):
         self.timeout = timeout
         self.verify = verify
         self.max_bytes = max_bytes
         self.proxy = self._parse_proxy(proxy)
+        self.rate_limiter = rate_limiter
 
     @staticmethod
     def _parse_proxy(proxy):
@@ -1005,6 +1039,8 @@ class RawHTTPClient:
         return len(parts) > 1 and parts[1].startswith("2")
 
     def send(self, scheme, host, port, request_line, header_lines, sni_host=None):
+        if self.rate_limiter is not None:
+            self.rate_limiter.acquire()
         request = request_line + "\r\n" + "\r\n".join(header_lines) + "\r\n\r\n"
         raw = b""
         sock = None
@@ -1079,7 +1115,8 @@ class HostBypassTest(BaseTest):
             self.path += "?" + parsed.query
         self.client = RawHTTPClient(timeout=self.timeout,
                                     verify=not self._insecure(),
-                                    proxy=self._proxy())
+                                    proxy=self._proxy(),
+                                    rate_limiter=self.rate_limiter)
 
     def _insecure(self):
         # Mirror the verification mode chosen for the shared requests session.
@@ -1447,6 +1484,9 @@ def parse_arguments():
     parser.add_argument("--wordlist", "-w",
                         help="File of virtual-host names for discovery (one per line)")
     parser.add_argument("--threads", type=int, default=5, help="Number of threads (1-20)")
+    parser.add_argument("--rate", type=float, default=0.0,
+                        help="Max requests per second across all threads "
+                             "(0 = unlimited; use a low value to avoid WAF/rate blocks)")
     parser.add_argument("--timeout", type=float, default=10, help="Per-request timeout in seconds")
     parser.add_argument("--methods", default="GET",
                         help="Comma-separated HTTP methods (e.g. GET,POST)")
@@ -1465,6 +1505,8 @@ def parse_arguments():
     args = parser.parse_args()
     if not 1 <= args.threads <= 20:
         parser.error("The --threads argument must be between 1 and 20.")
+    if args.rate < 0:
+        parser.error("The --rate argument must be 0 (unlimited) or positive.")
     if not args.url and not args.list:
         parser.error("Provide a target URL or --list <file>.")
     return args
@@ -1585,7 +1627,7 @@ def load_targets(args):
     return [args.url]
 
 
-def scan_target(url, args, session, methods, wordlist, stats):
+def scan_target(url, args, session, methods, wordlist, stats, rate_limiter=None):
     """Run every test against a single URL and return the test objects.
 
     Returns None for an invalid URL so a batch run can skip it and continue.
@@ -1604,7 +1646,7 @@ def scan_target(url, args, session, methods, wordlist, stats):
     common = dict(session=session, oob_domain=args.oob, methods=methods,
                   threads=args.threads, verbose=args.verbose, timeout=args.timeout,
                   oob_manager=oob_manager, wordlist=wordlist, insecure=args.insecure,
-                  stats=stats, quiet=_QUIET)
+                  stats=stats, quiet=_QUIET, rate_limiter=rate_limiter)
     tests = [
         HostInjectionTest(url, hostname, **common),
         HostBypassTest(url, hostname, **common),
@@ -1677,9 +1719,10 @@ def main():
     extra_headers = parse_headers(args.headers)
     wordlist = load_wordlist(args.wordlist)
 
+    rate_note = f"{args.rate:g} req/s" if args.rate > 0 else "unlimited"
     status(f"Targets: {len(targets)}")
     status(f"Methods: {', '.join(methods)}")
-    status(f"Using {args.threads} threads (timeout {args.timeout}s).")
+    status(f"Using {args.threads} threads (timeout {args.timeout}s, rate {rate_note}).")
     status(f"Verbosity level set to {args.verbose}.\n")
 
     session = build_session(
@@ -1691,12 +1734,14 @@ def main():
     )
 
     stats = RequestStats()
+    rate_limiter = RateLimiter(args.rate)
     all_tests = []
     try:
         for url in targets:
             if len(targets) > 1:
                 status(Fore.CYAN + Style.BRIGHT + f"\n===== Scanning {url} =====")
-            tests = scan_target(url, args, session, methods, wordlist, stats)
+            tests = scan_target(url, args, session, methods, wordlist, stats,
+                                rate_limiter=rate_limiter)
             if tests:
                 all_tests.extend(tests)
     except KeyboardInterrupt:
