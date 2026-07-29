@@ -1,6 +1,6 @@
-# HostHeaderScanner v1.10.0
+# HostHeaderScanner v1.11.0
 
-[![Version](https://img.shields.io/badge/version-1.10.0-brightgreen.svg)](host_header_scanner.py)
+[![Version](https://img.shields.io/badge/version-1.11.0-brightgreen.svg)](host_header_scanner.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HostHeaderScanner.svg?style=social&label=Star)](https://github.com/kabiri-labs/HostHeaderScanner)
@@ -39,6 +39,7 @@
 - **URL Parameter SSRF**: Probes common parameters (`url`, `next`, `redirect`, ...) against internal targets with baseline differencing.
 - **OOB Correlation**: Accepts an `--oob` domain that is embedded into payloads as a unique subdomain so interactions can be correlated on your own collaborator/listener.
 - **Multi-threaded Scanning**: Uses a bounded `ThreadPoolExecutor` with connection pooling and automatic retries.
+- **Rate Limiting**: `--rate` caps the entire scan (every thread and the raw-HTTP bypass client) at a fixed requests-per-second budget, so scanning stays gentle enough to avoid tripping a WAF or rate-based blocking.
 - **Flexible Requests**: Configurable HTTP methods, per-request timeout, custom headers, upstream proxy and optional TLS verification bypass.
 - **Customizable Verbosity**: Offers different levels of verbosity to control the amount of output.
 - **Severity-rated Findings**: Every finding carries a severity band (High / Medium / Low), shown in the console summary and every report format for quick triage.
@@ -97,6 +98,7 @@ python host_header_scanner.py http://example.com
 - `--oob-poll-url <url>`: Listener export URL polled after the scan to confirm OOB interactions.
 - `--wordlist <file>` or `-w`: Custom virtual-host wordlist for discovery (one name per line).
 - `--threads <number>`: Number of concurrent threads (default is 5). Must be between 1 and 20.
+- `--rate <n>`: Cap the whole scan (all threads combined, including raw-HTTP bypass traffic) at `n` requests per second. Default `0` means unlimited; set a low value (e.g. `5`) to stay under WAF or rate-based blocking.
 - `--timeout <seconds>`: Per-request timeout in seconds (default is 10).
 - `--methods <list>`: Comma-separated HTTP methods to test (default `GET`, e.g. `GET,POST`).
 - `--header <"Name: Value">` or `-H`: Add a custom request header. Repeatable.
@@ -146,6 +148,12 @@ python host_header_scanner.py https://example.com -o findings.sarif
 
 ```bash
 python host_header_scanner.py http://example.com --threads 10
+```
+
+#### Throttle to Avoid a WAF
+
+```bash
+python host_header_scanner.py http://example.com --threads 10 --rate 5
 ```
 
 #### Verbosity Level 2
