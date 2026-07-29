@@ -5,17 +5,21 @@
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HostHeaderScanner.svg?style=social&label=Star)](https://github.com/kabiri-labs/HostHeaderScanner)
 
-**HostHeaderScanner** is an advanced tool designed to detect Host Header Injection vulnerabilities, including Server-Side Request Forgery (SSRF), Open Redirects, and other anomalies. It uses sophisticated techniques, including crafted HTTP requests and comprehensive analysis, to help secure web applications effectively.
+**HostHeaderScanner** is a security scanner for **HTTP header–based vulnerabilities**. Modern stacks trust a whole family of request headers for routing, identity and caching — `Host`, the `X-Forwarded-*` headers, `Forwarded`, client-IP headers, URL-override headers and more — and each of them is an attack surface. HostHeaderScanner exercises that surface systematically and reports the bugs it uncovers: Host header injection, SSRF, confirmed web cache poisoning, access-control bypass, open redirects and hidden virtual hosts.
+
+Its focus is **signal over noise**. Findings are driven by evidence — unique per-scan markers, two-probe confirmation, real out-of-band correlation and stable-baseline differencing — so results are trustworthy enough to act on. And the output is built for real workflows: every finding carries a severity, reports export to JSON / Markdown / **SARIF 2.1.0**, and the process exit code lets a CI pipeline gate on the result.
 
 ---
 
 ## Table of Contents
 
+- [Detection Coverage](#detection-coverage)
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
   - [Basic Usage](#basic-usage)
   - [Options](#options)
+  - [Exit Codes](#exit-codes)
   - [Examples](#examples)
 - [Output](#output)
 - [Contributing](#contributing)
@@ -25,27 +29,46 @@
 
 ---
 
+## Detection Coverage
+
+Each module targets a distinct class of header-driven weakness and the headers/vectors that trigger it:
+
+| Attack class | Headers / vectors exercised |
+| ------------ | --------------------------- |
+| **Host header injection** (cache / password-reset / link poisoning) | `Host`, `X-Forwarded-Host`, `X-Forwarded-Server`, `X-Host`, `X-Original-Host`, `X-HTTP-Host-Override`, `Forwarded`, `Base-Url`, and 10+ more routing headers — reflection of a unique marker in body, `Location` or any response header |
+| **Host validation bypass** | Duplicate `Host` headers, absolute-URI request lines, indented (line-folded) headers, host overrides — sent with a raw HTTP/1.1 client |
+| **Confirmed web cache poisoning** | Unkeyed headers (`X-Forwarded-Host`, `X-Host`, `X-Original-Host`, `Base-Url`, …) with a cache-buster and a clean re-request that proves the poisoned response is served |
+| **Access-control bypass** | Internal `Host` / `X-Forwarded-For` / `X-Real-IP` / `True-Client-IP` values against 401/403 endpoints, plus path-override headers `X-Original-URL` / `X-Rewrite-URL` |
+| **SSRF via routing headers** | `Host`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-IP`, `Forwarded` pointed at internal hosts and cloud metadata endpoints |
+| **Blind SSRF (out-of-band)** | Per-scan correlation id embedded in payloads, confirmed by polling your listener |
+| **Open redirect** | `Host`-driven redirects whose `Location` host matches the injected value |
+| **URL-parameter SSRF** | `url`, `next`, `redirect`, `dest`, `uri`, `path`, … against internal targets, with baseline differencing |
+| **Virtual host discovery** | `Host`-header brute force (built-in or custom wordlist) with two-probe confirmation |
+
+---
+
 ## Features
 
-- **Reflection-based Host Header Injection**: Injects a unique random marker host across `Host`, `X-Forwarded-Host`, `X-Forwarded-For`, `Forwarded` and 15+ other routing headers, then detects reflection in the response body, the `Location` header and other response headers. Because the marker is unique, findings are high-confidence (cache poisoning / password-reset poisoning / link poisoning).
-- **Raw HTTP Validation Bypasses**: Uses a built-in raw HTTP/1.1 client (not `requests`) to send malformed requests that bypass Host validation: **duplicate `Host` headers**, **absolute-URI request lines**, **indented (line-folded) headers** and host overrides. When `--proxy` is set, this raw traffic is tunnelled through the proxy with `CONNECT` (keeping the malformed request intact), so bypass tests are captured by Burp or any intercepting proxy just like the rest of the scan.
-- **Confirmed Web Cache Poisoning**: Adds a unique cache-buster, sends a poisoning request via unkeyed headers, then re-requests the same URL *without* the header. A surviving marker confirms the response is cached and served to other users, and `X-Cache`/`Age`/`CF-Cache-Status` are reported.
-- **Host-based Access Control Bypass**: Detects 401/403 endpoints that become reachable when presenting an internal host or client IP (`Host: localhost`, `X-Forwarded-For: 127.0.0.1`, ...), plus front-end path-override headers (`X-Original-URL`, `X-Rewrite-URL`).
-- **Virtual Host Discovery**: Brute-forces internal/hidden virtual hosts through the `Host` header against a built-in or custom wordlist. It samples the default virtual host several times to learn its natural page-to-page variance, then only reports a candidate whose status, length or title difference is **confirmed on a second probe** — so dynamic content does not masquerade as a hidden host.
-- **Real OOB Confirmation**: Embeds a per-scan correlation id into out-of-band payloads and, given a listener export URL (`--oob-poll-url`), polls it to confirm blind SSRF interactions. Works with interactsh, webhook.site, RequestBin, Burp Collaborator exports and custom sinks.
-- **Copy-paste Reproduction**: Every finding includes a ready-to-run reproduction command — `curl` for header/parameter issues and a `printf | ncat` / `openssl s_client` wire-level command for raw bypasses.
-- **SSRF Detection**: Combines response-time deviation, internal-target indicators and header anomalies behind a weighted scoring model. Header anomalies are measured against headers proven stable across baseline samples — per-request identifiers (request ids, tracing, `CF-RAY`, nonces) are learned as volatile and ignored, cutting false positives.
-- **Open Redirect Detection**: Flags redirects whose `Location` host matches an injected Host value.
-- **URL Parameter SSRF**: Probes common parameters (`url`, `next`, `redirect`, ...) against internal targets with baseline differencing.
-- **OOB Correlation**: Accepts an `--oob` domain that is embedded into payloads as a unique subdomain so interactions can be correlated on your own collaborator/listener.
-- **Multi-threaded Scanning**: Uses a bounded `ThreadPoolExecutor` with connection pooling and automatic retries.
-- **Rate Limiting**: `--rate` caps the entire scan (every thread and the raw-HTTP bypass client) at a fixed requests-per-second budget, so scanning stays gentle enough to avoid tripping a WAF or rate-based blocking.
-- **Flexible Requests**: Configurable HTTP methods, per-request timeout, custom headers, upstream proxy and optional TLS verification bypass.
-- **Customizable Verbosity**: Offers different levels of verbosity to control the amount of output.
-- **Severity-rated Findings**: Every finding carries a severity band (High / Medium / Low), shown in the console summary and every report format for quick triage.
-- **Exportable Reports**: Saves results as JSON, Markdown, or **SARIF 2.1.0** — the SARIF output includes per-rule `security-severity` scores and fingerprints, so it drops straight into GitHub code scanning or a security dashboard.
-- **Batch Scanning**: Scan a whole list of URLs in one run with `--list`, aggregating every target's findings into a single report and exit code.
-- **Graceful Interruption Handling**: Allows interruption with `Ctrl+C` and exits gracefully without data loss.
+### Detection & accuracy
+
+- **Unique-marker reflection**: injects a random per-request marker so a reflected Host is a high-confidence finding, not a guess — across `Host`, `X-Forwarded-Host`, `Forwarded` and 15+ other headers, checked in the body, the `Location` header and every response header.
+- **Raw HTTP/1.1 client**: a purpose-built client (not `requests`) sends malformed requests verbatim — duplicate `Host` headers, absolute-URI request lines, line-folded headers — the building blocks of most Host validation bypasses.
+- **Confirmed cache poisoning, not just reflection**: a cache-buster is planted, the poisoning request is sent through an unkeyed header, and the URL is re-requested *without* it; only a surviving marker (served from cache) is reported, with `X-Cache` / `Age` / `CF-Cache-Status` context.
+- **Weighted SSRF scoring**: response-time deviation, internal-target indicators (`root:x:0:0:`, cloud-metadata markers, connection errors) and header anomalies are combined behind a threshold. Header anomalies are measured only against headers proven stable across baseline samples, so per-request identifiers (request ids, tracing, `CF-RAY`, nonces) are learned as volatile and ignored.
+- **Confirmed virtual-host discovery**: the default vhost is sampled repeatedly to learn its natural page-to-page variance; a candidate is reported only when a status, length or title difference is confirmed on a second probe — dynamic content does not masquerade as a hidden host.
+- **Real out-of-band confirmation**: embeds a per-scan correlation id into OOB payloads and, given a listener export URL, polls it to confirm blind SSRF. Works with interactsh, webhook.site, RequestBin, Burp Collaborator exports and custom sinks.
+
+### Engine, workflow & reporting
+
+- **Severity-rated findings**: every finding carries a severity band (High / Medium / Low), shown in the summary and in every report format for quick triage.
+- **Reports in JSON, Markdown or SARIF 2.1.0**: chosen by output extension. SARIF includes per-rule `security-severity` scores and stable fingerprints, dropping straight into GitHub code scanning or a security dashboard.
+- **CI-friendly exit codes**: `0` = clean, `1` = findings, `2` = the scan could not run (bad input, interrupted, or the target was unreachable) — an unreachable host is never mistaken for a clean result.
+- **Batch scanning**: `--list` scans a whole file of URLs in one run, aggregating findings into a single report, summary and exit code.
+- **Copy-paste reproduction**: each finding ships a ready-to-run command — `curl` for header/parameter issues, a `printf | ncat` / `openssl s_client` wire-level command for raw bypasses.
+- **Proxy-aware, end to end**: `--proxy` routes the whole scan through an upstream/intercepting proxy (e.g. Burp) — including the raw bypass traffic, tunnelled via `CONNECT` so the malformed requests stay intact. Supports `user:pass@` basic auth.
+- **WAF-friendly rate limiting**: `--rate` caps the entire scan (all threads plus the raw client) at a fixed requests-per-second budget to stay under rate-based blocking.
+- **Fast and configurable**: bounded `ThreadPoolExecutor` with connection pooling and automatic retries, configurable HTTP methods, timeout, custom headers and optional TLS-verification bypass.
+- **Quiet / TTY-aware output**: `--quiet` (auto-enabled when stdout is not a TTY) strips progress bars and colours so piped and CI logs stay clean, while `Ctrl+C` stops the run gracefully without losing collected results.
 
 ---
 
@@ -73,7 +96,7 @@ pip install -r requirements.txt
 Alternatively, install them individually:
 
 ```bash
-pip install requests tqdm colorama
+pip install requests tqdm colorama urllib3
 ```
 
 ---
@@ -94,19 +117,19 @@ python host_header_scanner.py http://example.com
 
 - `<target_url>`: The target URL to scan. Required unless `--list` is given.
 - `--list <file>` or `-l`: Scan every URL in a file (one per line; blank lines and `#` comments are ignored). Findings from all targets are aggregated into one report.
-- `--oob <domain>`: Specify an Out-of-Band (OOB) domain for advanced SSRF correlation.
+- `--oob <domain>`: Out-of-Band (OOB) domain embedded into payloads for SSRF correlation.
 - `--oob-poll-url <url>`: Listener export URL polled after the scan to confirm OOB interactions.
 - `--wordlist <file>` or `-w`: Custom virtual-host wordlist for discovery (one name per line).
-- `--threads <number>`: Number of concurrent threads (default is 5). Must be between 1 and 20.
-- `--rate <n>`: Cap the whole scan (all threads combined, including raw-HTTP bypass traffic) at `n` requests per second. Default `0` means unlimited; set a low value (e.g. `5`) to stay under WAF or rate-based blocking.
-- `--timeout <seconds>`: Per-request timeout in seconds (default is 10).
+- `--threads <number>`: Number of concurrent threads (default `5`). Must be between 1 and 20.
+- `--rate N`: Cap the whole scan (all threads combined, including raw-HTTP bypass traffic) at `N` requests per second. Default `0` means unlimited; set a low value (e.g. `5`) to stay under WAF or rate-based blocking.
+- `--timeout <seconds>`: Per-request timeout in seconds (default `10`).
 - `--methods <list>`: Comma-separated HTTP methods to test (default `GET`, e.g. `GET,POST`).
 - `--header <"Name: Value">` or `-H`: Add a custom request header. Repeatable.
 - `--proxy <url>`: Route traffic through an upstream proxy (e.g. `http://127.0.0.1:8080`), including the raw-HTTP bypass tests, which are tunnelled via `CONNECT`. Supports optional `user:pass@` basic auth.
 - `--insecure` or `-k`: Disable TLS certificate verification.
-- `--verbose <level>`: Verbosity level (1 or 2). Level 2 provides more detailed output.
+- `--verbose <level>`: Verbosity level (1 or 2). Level 2 also records non-findings for the report.
 - `--quiet` or `-q`: Suppress progress bars, colours and status chatter (only findings and the final summary are printed). Auto-enabled when stdout is not a TTY, so piped/CI logs stay clean.
-- `--output <file>` or `-o <file>`: Output file to save the test results. The format is chosen by extension: `.json`, `.sarif` (SARIF 2.1.0 for GitHub code scanning / security dashboards) or `.md`.
+- `--output <file>` or `-o <file>`: Save results to a file. The format is chosen by extension: `.json`, `.sarif` (SARIF 2.1.0 for GitHub code scanning / security dashboards) or `.md`.
 
 ### Exit Codes
 
@@ -125,7 +148,7 @@ An unreachable target is deliberately reported as code `2` (inconclusive), never
 ```bash
 python host_header_scanner.py https://example.com --quiet -o report.json
 if [ $? -eq 1 ]; then
-  echo "Host header findings detected — failing the build."
+  echo "Header vulnerabilities detected — failing the build."
   exit 1
 fi
 ```
@@ -144,40 +167,22 @@ python host_header_scanner.py --list targets.txt -o report.json
 python host_header_scanner.py https://example.com -o findings.sarif
 ```
 
-#### Specify Number of Threads
-
-```bash
-python host_header_scanner.py http://example.com --threads 10
-```
-
 #### Throttle to Avoid a WAF
 
 ```bash
 python host_header_scanner.py http://example.com --threads 10 --rate 5
 ```
 
-#### Verbosity Level 2
+#### Route Everything Through Burp (raw bypasses included)
 
 ```bash
-python host_header_scanner.py http://example.com --verbose 2
+python host_header_scanner.py https://example.com --proxy http://127.0.0.1:8080 -k
 ```
 
-#### Save Results to a File
+#### Test Additional Methods
 
 ```bash
-python host_header_scanner.py http://example.com -o results.json
-```
-
-#### Use an OOB Domain
-
-```bash
-python host_header_scanner.py http://example.com --oob oob.example.com
-```
-
-#### Test Additional Methods and Route Through a Proxy
-
-```bash
-python host_header_scanner.py http://example.com --methods GET,POST --proxy http://127.0.0.1:8080
+python host_header_scanner.py http://example.com --methods GET,POST
 ```
 
 #### Send Custom Headers (e.g. Authentication)
@@ -201,44 +206,47 @@ python host_header_scanner.py http://example.com -w internal-vhosts.txt
 #### Full Command
 
 ```bash
-python host_header_scanner.py http://example.com --threads 10 --timeout 8 --verbose 2 --output results.md --oob oob.example.com
+python host_header_scanner.py http://example.com --threads 10 --timeout 8 --rate 20 --verbose 2 --output results.sarif --oob oob.example.com
 ```
 
 ### Interrupting the Program
 
-- Press `Ctrl+C` at any time to stop the execution gracefully.
+- Press `Ctrl+C` at any time to stop the execution gracefully; results collected so far are still written to `--output`.
 
 ---
 
 ## Output
 
-The tool provides a detailed summary of the findings, highlighting any vulnerabilities detected. The output includes:
+The scan ends with a summary of every finding. Each finding reports:
 
-- **Test Type**: SSRF, Open Redirect, or Host Header Injection.
-- **URL Tested**: The target URL that was tested.
-- **HTTP Method Used**: GET, POST, PUT, DELETE.
-- **Manipulated Headers**: The HTTP headers used in the request.
-- **Status Code Received**: HTTP response status code.
-- **Response Time**: Time taken to receive a response.
-- **Header Anomalies**: Details of any discrepancies in HTTP headers between baseline and test responses (e.g., changes to `Content-Type` or `Vary` headers).
-- **Analysis**: Interpretation of the results, including response time anomalies, header anomalies, and potential OOB interactions.
+- **Test Type** — one of Host Header Injection, Host Header Bypass, Web Cache Poisoning, Auth Bypass, Virtual Host Discovery, SSRF, URL Parameter SSRF, Open Redirect or Blind SSRF (OOB).
+- **Severity** — High / Medium / Low.
+- **URL & HTTP Method** — the request that triggered the finding.
+- **Header / Parameter & Payload** — the manipulated header (or URL parameter) and the value used.
+- **Status Code & Response Time** — the observed response.
+- **Analysis** — why it was flagged (reflection location, weighted SSRF signals, header anomalies, confirmed poisoning, OOB interaction, …).
+- **Reproduce** — a copy-paste command that reproduces the finding.
+
+A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are always printed so coverage and reachability are visible.
 
 ### Sample Output
 
 ```
-HostHeaderScanner 1.4.0
+HostHeaderScanner 1.11.0
 GitHub: https://github.com/kabiri-labs/HostHeaderScanner
+
+Targets: 1
+Methods: GET
+Using 5 threads (timeout 10.0s, rate unlimited).
+Verbosity level set to 1.
 
 Target URL: http://example.com
 Original Host: example.com
-Methods: GET
-Using 5 threads (timeout 10.0s).
-Verbosity level set to 1.
 
 Starting Host Header Injection Testing...
-Host Header Injection Testing: 100%|████████████████████████| 27/27 [00:06<00:00, 4.34test/s]
+Host Header Injection Testing: 100%|████████████████████████| 76/76 [00:06<00:00, 12.1test/s]
 
-[!] Host Header Injection Finding!
+[!] Host Header Injection Finding! [Medium]
 URL: http://example.com/
 Method: GET
 Header: X-Forwarded-Host
@@ -246,13 +254,16 @@ Payload: 834503a3f66d.example-collab.com
 Status Code: 302
 Response Time: 0.01s
 Analysis: Injected host reflected in 'Location' header: https://834503a3f66d.example-collab.com/login Injected host reflected in response body (cache/link poisoning).
+Reproduce: curl -s -i -H 'X-Forwarded-Host: 834503a3f66d.example-collab.com' 'http://example.com/'
 --------------------------------------------------------------------------------
 
 ========== Test Summary ==========
+Targets scanned: 1/1
+Requests: 512/512 succeeded (0 failed).
 Total findings: 1
 
 --- Host Header Injection ---
-- GET http://example.com/
+- [Medium] GET http://example.com/
   Header/Parameter: X-Forwarded-Host
   Payload: 834503a3f66d.example-collab.com
   Analysis: Injected host reflected in 'Location' header: https://834503a3f66d.example-collab.com/login Injected host reflected in response body (cache/link poisoning).
@@ -276,7 +287,7 @@ Contributions are welcome! Please follow these steps:
 3. **Create a Branch**: Create a new branch for your feature or bug fix.
 
    ```bash
-   git checkout -b feature/YourFeature
+   git checkout -b feat/YourFeature
    ```
 
 4. **Make Changes**: Add your improvements or fixes, together with matching tests.
@@ -290,13 +301,13 @@ Contributions are welcome! Please follow these steps:
 6. **Commit Changes**: Commit your changes with a descriptive message.
 
    ```bash
-   git commit -m "Add new feature to improve scanning speed"
+   git commit -m "Add new detection module for X"
    ```
 
 7. **Push to GitHub**: Push your changes to your forked repository.
 
    ```bash
-   git push origin feature/YourFeature
+   git push origin feat/YourFeature
    ```
 
 8. **Open a Pull Request**: Navigate to the original repository and click on "New Pull Request".
@@ -329,6 +340,3 @@ Feel free to open an issue or pull request for any bugs, feature requests, or qu
 ---
 
 **Star this project** ⭐ if you find it useful!
-
-
-
