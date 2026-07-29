@@ -8,6 +8,7 @@ import socket
 import ssl
 import statistics
 import sys
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -25,8 +26,68 @@ init(autoreset=True)
 
 # Program metadata
 __tool_name__ = "HostHeaderScanner"
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 __github_url__ = "https://github.com/kabiri-labs/HostHeaderScanner"
+
+# Process exit codes, chosen so CI pipelines can gate on the outcome:
+#   0 -> scan completed and nothing was found (safe to proceed)
+#   1 -> scan completed and at least one finding was reported (fail the build)
+#   2 -> the scan could not run meaningfully (bad input or unreachable target)
+EXIT_OK = 0
+EXIT_FINDINGS = 1
+EXIT_ERROR = 2
+
+# Suppresses progress/status chatter (set from --quiet / non-TTY detection).
+# Findings and the final summary are never suppressed - only the noise around
+# them - so piping the tool into a log stays useful.
+_QUIET = False
+
+
+def status(*args, **kwargs):
+    """Print progress/status output unless the scan is running in quiet mode."""
+    if not _QUIET:
+        print(*args, **kwargs)
+
+
+def resolve_quiet(quiet_flag, stdout_isatty):
+    """Quiet mode is on when explicitly requested or when stdout is not a TTY."""
+    return bool(quiet_flag or not stdout_isatty)
+
+
+class RequestStats:
+    """Thread-safe tally of issued HTTP requests and how many failed.
+
+    Lets the scanner distinguish "no vulnerabilities" from "the target never
+    answered" - a distinction that matters a great deal for a security tool,
+    where a silently unreachable host must not read as a clean bill of health.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.total = 0
+        self.failed = 0
+
+    def record(self, ok):
+        with self._lock:
+            self.total += 1
+            if not ok:
+                self.failed += 1
+
+    @property
+    def succeeded(self):
+        return self.total - self.failed
+
+    @property
+    def all_failed(self):
+        """True when requests were attempted and every one of them failed."""
+        return self.total > 0 and self.failed == self.total
+
+
+def determine_exit_code(total_findings, stats):
+    """Map the scan outcome onto a process exit code (see EXIT_* constants)."""
+    if stats is not None and stats.all_failed:
+        return EXIT_ERROR
+    return EXIT_FINDINGS if total_findings > 0 else EXIT_OK
 
 
 def build_session(timeout, threads, insecure, proxy, extra_headers):
@@ -145,7 +206,8 @@ class BaseTest:
 
     def __init__(self, target_url, original_host, session, oob_domain=None,
                  methods=None, threads=5, verbose=1, timeout=10,
-                 oob_manager=None, wordlist=None, insecure=False):
+                 oob_manager=None, wordlist=None, insecure=False,
+                 stats=None, quiet=False):
         self.target_url = target_url
         self.original_host = original_host
         self.session = session
@@ -157,31 +219,40 @@ class BaseTest:
         self.threads = threads
         self.verbose = verbose
         self.timeout = timeout
+        self.stats = stats
+        self.quiet = quiet
         self.vulnerabilities_found = []
         self.all_results = []
 
     def request(self, method, url=None, headers=None, allow_redirects=True):
         """Issue a single request, returning the response or None on failure."""
         try:
-            return self.session.request(
+            response = self.session.request(
                 method,
                 url or self.target_url,
                 headers=headers,
                 timeout=self.timeout,
                 allow_redirects=allow_redirects,
             )
+            if self.stats is not None:
+                self.stats.record(True)
+            return response
         except requests.RequestException:
+            if self.stats is not None:
+                self.stats.record(False)
             return None
 
     def run_pool(self, worker, test_cases, description):
         """Run worker over test_cases with a bounded thread pool and progress bar."""
         if not test_cases:
             return
-        print(f"\nStarting {description}...")
+        if not self.quiet:
+            print(f"\nStarting {description}...")
         try:
             with ThreadPoolExecutor(max_workers=self.threads) as executor:
                 futures = [executor.submit(worker, *case) for case in test_cases]
-                with tqdm(total=len(futures), desc=description, unit="test") as pbar:
+                with tqdm(total=len(futures), desc=description, unit="test",
+                          disable=self.quiet) as pbar:
                     for future in as_completed(futures):
                         future.result()
                         pbar.update(1)
@@ -396,13 +467,13 @@ class SSRFTest(BaseTest):
 
     def compute_baseline(self, samples=6):
         """Measure a stable baseline latency and capture reference headers."""
-        print("\nComputing baseline latency...")
+        status("\nComputing baseline latency...")
         delays = []
         for i in range(samples):
             start = time.time()
             response = self.request("GET")
             if response is None:
-                print(f"Request {i + 1} failed.")
+                status(f"Request {i + 1} failed.")
                 continue
             elapsed = time.time() - start
             if i == 0:
@@ -413,10 +484,10 @@ class SSRFTest(BaseTest):
             delays.sort()
             trimmed = delays[1:-1] if len(delays) > 2 else delays
             self.typical_delay = statistics.mean(trimmed)
-            print(f"Baseline latency: {self.typical_delay:.2f}s")
+            status(f"Baseline latency: {self.typical_delay:.2f}s")
         else:
             self.typical_delay = 1.0
-            print("Could not measure latency; defaulting to 1.00s.")
+            status("Could not measure latency; defaulting to 1.00s.")
 
     def generate_payloads(self):
         internal_hosts = [
@@ -1111,6 +1182,9 @@ def parse_arguments():
                         help="Disable TLS certificate verification")
     parser.add_argument("--verbose", type=int, choices=[1, 2], default=1,
                         help="Verbosity level")
+    parser.add_argument("--quiet", "-q", action="store_true",
+                        help="Suppress progress bars and status output "
+                             "(auto-enabled when stdout is not a TTY)")
     parser.add_argument("--output", "-o", help="Output file (.json or .md)")
     args = parser.parse_args()
     if not 1 <= args.threads <= 20:
@@ -1208,31 +1282,39 @@ def confirm_oob_interactions(oob_manager, session, timeout, tests):
 
 
 def main():
-    print(Fore.CYAN + Style.BRIGHT + f"{__tool_name__} {__version__}")
-    print(Fore.CYAN + f"GitHub: {__github_url__}\n")
-
     args = parse_arguments()
+
+    # Resolve quiet mode before anything is printed so status output, colour
+    # stripping and progress bars all honour it consistently. When stdout is
+    # redirected (a CI log, a file), colours and progress bars are noise.
+    global _QUIET
+    _QUIET = resolve_quiet(args.quiet, sys.stdout.isatty())
+    init(autoreset=True, strip=_QUIET or None)
+
+    status(Fore.CYAN + Style.BRIGHT + f"{__tool_name__} {__version__}")
+    status(Fore.CYAN + f"GitHub: {__github_url__}\n")
+
     parsed_url = urlparse(args.url)
     hostname = parsed_url.hostname
     if not hostname:
-        print("Invalid URL provided.")
-        sys.exit(1)
+        print(Fore.RED + "Invalid URL provided.")
+        sys.exit(EXIT_ERROR)
 
     methods = [m.strip().upper() for m in args.methods.split(",") if m.strip()]
     extra_headers = parse_headers(args.headers)
     wordlist = load_wordlist(args.wordlist)
     oob_manager = OOBManager(args.oob, args.oob_poll_url) if args.oob else None
 
-    print(f"Target URL: {args.url}")
-    print(f"Original Host: {hostname}")
-    print(f"Methods: {', '.join(methods)}")
-    print(f"Using {args.threads} threads (timeout {args.timeout}s).")
-    print(f"Verbosity level set to {args.verbose}.")
+    status(f"Target URL: {args.url}")
+    status(f"Original Host: {hostname}")
+    status(f"Methods: {', '.join(methods)}")
+    status(f"Using {args.threads} threads (timeout {args.timeout}s).")
+    status(f"Verbosity level set to {args.verbose}.")
     if oob_manager:
-        print(f"OOB domain: {args.oob} (scan id {oob_manager.scan_id}).")
-        print("Poll URL: " + (args.oob_poll_url or "not set (manual correlation)") + "\n")
+        status(f"OOB domain: {args.oob} (scan id {oob_manager.scan_id}).")
+        status("Poll URL: " + (args.oob_poll_url or "not set (manual correlation)") + "\n")
     else:
-        print("No OOB domain provided.\n")
+        status("No OOB domain provided.\n")
 
     session = build_session(
         timeout=args.timeout,
@@ -1242,9 +1324,11 @@ def main():
         extra_headers=extra_headers,
     )
 
+    stats = RequestStats()
     common = dict(session=session, oob_domain=args.oob, methods=methods,
                   threads=args.threads, verbose=args.verbose, timeout=args.timeout,
-                  oob_manager=oob_manager, wordlist=wordlist, insecure=args.insecure)
+                  oob_manager=oob_manager, wordlist=wordlist, insecure=args.insecure,
+                  stats=stats, quiet=_QUIET)
 
     tests = [
         HostInjectionTest(args.url, hostname, **common),
@@ -1263,16 +1347,18 @@ def main():
     except KeyboardInterrupt:
         print(Fore.YELLOW + "\n[!] Program interrupted by user.")
         save_results(args.output, tests, args.verbose)
-        sys.exit(0)
+        sys.exit(EXIT_ERROR)
 
     if oob_manager and oob_manager.poll_url:
-        print("\nPolling OOB listener for interactions...")
+        status("\nPolling OOB listener for interactions...")
         confirm_oob_interactions(oob_manager, session, args.timeout, tests)
 
     save_results(args.output, tests, args.verbose)
 
-    print(Fore.CYAN + Style.BRIGHT + "\n========== Test Summary ==========")
     total_vulns = sum(len(test.vulnerabilities_found) for test in tests)
+    print(Fore.CYAN + Style.BRIGHT + "\n========== Test Summary ==========")
+    print(Fore.CYAN + f"Requests: {stats.succeeded}/{stats.total} succeeded "
+          f"({stats.failed} failed).")
     print(Fore.CYAN + f"Total findings: {total_vulns}")
     for test in tests:
         if test.vulnerabilities_found:
@@ -1283,10 +1369,19 @@ def main():
                 print(f"  Payload: {vuln['payload']}")
                 print(Fore.YELLOW + f"  Analysis: {vuln['analysis']}")
                 print(Fore.RED + "-" * 80)
-    if total_vulns == 0:
+
+    # An unreachable target must not be reported as a clean result: every issued
+    # request failing means the findings list is empty for the wrong reason.
+    if stats.all_failed:
+        print(Fore.RED + Style.BRIGHT +
+              "\n[!] Every request failed - the target appears unreachable. "
+              "Results are inconclusive, not a clean bill of health.")
+    elif total_vulns == 0:
         print(Fore.GREEN + "No vulnerabilities were found.")
     print(Fore.CYAN + "=" * 35)
 
+    return determine_exit_code(total_vulns, stats)
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
