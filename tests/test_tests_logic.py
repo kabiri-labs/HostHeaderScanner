@@ -59,14 +59,39 @@ class SSRFLogicTests(unittest.TestCase):
 
     def test_header_anomalies_flag_new_and_changed(self):
         test = make_test(hhs.SSRFTest, FakeSession())
-        test.baseline_headers = {"Server": "nginx", "X-Env": "prod"}
+        test.stable_baseline_headers = {"Server": "nginx", "X-Env": "prod"}
+        test.volatile_headers = {"x-request-id"}
         anomalies = test.detect_header_anomalies({
             "Server": "nginx",          # excluded -> ignored
-            "X-Env": "staging",         # changed
-            "X-New": "1",               # new
+            "X-Env": "staging",         # stable baseline header, changed
+            "X-Request-Id": "abc123",   # learned volatile -> ignored
+            "X-New": "1",               # genuinely new -> flagged
         })
         self.assertIn("'X-Env' changed", anomalies)
         self.assertIn("new header 'X-New'", anomalies)
+        self.assertFalse(any("Request-Id" in a for a in anomalies))
+
+    def test_header_anomalies_empty_without_stable_baseline(self):
+        # With no stable reference, nothing is flagged (avoids noise-driven FPs).
+        test = make_test(hhs.SSRFTest, FakeSession())
+        self.assertEqual(test.detect_header_anomalies({"X-Any": "1"}), [])
+
+    def test_learn_header_stability_partitions_headers(self):
+        test = make_test(hhs.SSRFTest, FakeSession())
+        test._learn_header_stability([
+            {"Server": "nginx", "X-Env": "prod", "X-Req": "a"},
+            {"Server": "nginx", "X-Env": "prod", "X-Req": "b"},   # X-Req varies
+            {"Server": "nginx", "X-Env": "prod"},                  # X-Req absent
+        ])
+        self.assertEqual(test.stable_baseline_headers,
+                         {"Server": "nginx", "X-Env": "prod"})
+        self.assertIn("x-req", test.volatile_headers)
+
+    def test_learn_header_stability_no_samples(self):
+        test = make_test(hhs.SSRFTest, FakeSession())
+        test._learn_header_stability([])
+        self.assertEqual(test.stable_baseline_headers, {})
+        self.assertEqual(test.volatile_headers, set())
 
     def test_analyze_records_high_score_indicator(self):
         test = make_test(hhs.SSRFTest, FakeSession())
@@ -217,6 +242,56 @@ class VhostDiscoveryTests(unittest.TestCase):
         self.assertIn("admin", hosts)
         self.assertIn("admin.example.com", hosts)
         self.assertIn("admin.internal", hosts)
+
+    def _vhost_with_baseline(self):
+        test = make_test(hhs.VhostDiscoveryTest, FakeSession())
+        test.baseline_status = 404
+        test.baseline_len = 1000
+        test.baseline_titles = {"Not Found"}
+        test.len_tolerance = 256
+        return test
+
+    def test_distinct_signal_stable_status_change(self):
+        test = self._vhost_with_baseline()
+        signal = test._distinct_signal((200, 1000, ""), (200, 1000, ""))
+        self.assertIsNotNone(signal)
+        self.assertIn("status 200", signal)
+
+    def test_distinct_signal_rejects_transient_length(self):
+        # First probe looks big, second matches baseline -> not consistent.
+        test = self._vhost_with_baseline()
+        self.assertIsNone(test._distinct_signal((404, 5000, ""), (404, 1000, "")))
+
+    def test_distinct_signal_confirms_consistent_length(self):
+        test = self._vhost_with_baseline()
+        signal = test._distinct_signal((404, 5000, ""), (404, 5010, ""))
+        self.assertIsNotNone(signal)
+        self.assertIn("body length", signal)
+
+    def test_distinct_signal_within_tolerance_is_none(self):
+        test = self._vhost_with_baseline()
+        self.assertIsNone(test._distinct_signal((404, 1100, ""), (404, 1100, "")))
+
+    def test_worker_records_confirmed_distinct_host(self):
+        test = self._vhost_with_baseline()
+        # Every candidate_hosts() shape returns a stable 200 (distinct from 404).
+        test._measure = lambda host: (200, 1200, "Admin")
+        test.worker("admin")
+        self.assertEqual(len(test.vulnerabilities_found), 1)
+        self.assertIn("confirmed on two probes",
+                      test.vulnerabilities_found[0]["analysis"])
+
+    def test_worker_ignores_transient_difference(self):
+        test = self._vhost_with_baseline()
+        # First probe differs, confirming probe reverts to baseline -> dropped.
+        measurements = iter([
+            (404, 6000, ""), (404, 1000, ""),   # host 1: transient
+            (404, 6000, ""), (404, 1000, ""),   # host 2: transient
+            (404, 6000, ""), (404, 1000, ""),   # host 3: transient
+        ])
+        test._measure = lambda host: next(measurements)
+        test.worker("admin")
+        self.assertEqual(test.vulnerabilities_found, [])
 
 
 if __name__ == "__main__":
