@@ -7,7 +7,7 @@ import types
 import unittest
 from unittest import mock
 
-import host_header_scanner as hhs
+import headerhawk as hhs
 from tests.helpers import FakeSession
 
 
@@ -72,7 +72,7 @@ class BuildSarifTests(unittest.TestCase):
         ], version="9.9.9")
         self.assertEqual(sarif["version"], "2.1.0")
         run = sarif["runs"][0]
-        self.assertEqual(run["tool"]["driver"]["name"], "HostHeaderScanner")
+        self.assertEqual(run["tool"]["driver"]["name"], "HeaderHawk")
         self.assertEqual(run["tool"]["driver"]["version"], "9.9.9")
 
         rule_ids = {r["id"] for r in run["tool"]["driver"]["rules"]}

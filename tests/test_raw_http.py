@@ -2,7 +2,7 @@
 
 import unittest
 
-import host_header_scanner as hhs
+import headerhawk as hhs
 
 
 class RawResponseTests(unittest.TestCase):

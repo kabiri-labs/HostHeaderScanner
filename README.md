@@ -1,11 +1,13 @@
-# HostHeaderScanner v1.11.0
+# HeaderHawk v2.0.0
 
-[![Version](https://img.shields.io/badge/version-1.11.0-brightgreen.svg)](host_header_scanner.py)
+[![Version](https://img.shields.io/badge/version-2.0.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
-[![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HostHeaderScanner.svg?style=social&label=Star)](https://github.com/kabiri-labs/HostHeaderScanner)
+[![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
-**HostHeaderScanner** is a security scanner for **HTTP header–based vulnerabilities**. Modern stacks trust a whole family of request headers for routing, identity and caching — `Host`, the `X-Forwarded-*` headers, `Forwarded`, client-IP headers, URL-override headers and more — and each of them is an attack surface. HostHeaderScanner exercises that surface systematically and reports the bugs it uncovers: Host header injection, SSRF, confirmed web cache poisoning, access-control bypass, open redirects and hidden virtual hosts.
+> **HeaderHawk** was formerly **HostHeaderScanner**. The tool grew past the `Host` header to cover the whole family of routing, identity and caching headers, so it was renamed to match. The old `python host_header_scanner.py` entry point still works via a thin compatibility shim, but new usage should call `headerhawk.py`.
+
+**HeaderHawk** is a security scanner for **HTTP header–based vulnerabilities**. Modern stacks trust a whole family of request headers for routing, identity and caching — `Host`, the `X-Forwarded-*` headers, `Forwarded`, client-IP headers, URL-override headers and more — and each of them is an attack surface. HeaderHawk exercises that surface systematically and reports the bugs it uncovers: Host header injection, SSRF, confirmed web cache poisoning, access-control bypass, open redirects and hidden virtual hosts.
 
 Its focus is **signal over noise**. Findings are driven by evidence — unique per-scan markers, two-probe confirmation, real out-of-band correlation and stable-baseline differencing — so results are trustworthy enough to act on. And the output is built for real workflows: every finding carries a severity, reports export to JSON / Markdown / **SARIF 2.1.0**, and the process exit code lets a CI pipeline gate on the result.
 
@@ -81,8 +83,8 @@ Each module targets a distinct class of header-driven weakness and the headers/v
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/kabiri-labs/HostHeaderScanner.git
-cd HostHeaderScanner
+git clone https://github.com/kabiri-labs/HeaderHawk.git
+cd HeaderHawk
 ```
 
 ### Install Dependencies
@@ -104,13 +106,13 @@ pip install requests tqdm colorama urllib3
 ## Usage
 
 ```bash
-python host_header_scanner.py [options] <target_url>
+python headerhawk.py [options] <target_url>
 ```
 
 ### Basic Usage
 
 ```bash
-python host_header_scanner.py http://example.com
+python headerhawk.py http://example.com
 ```
 
 ### Options
@@ -146,7 +148,7 @@ An unreachable target is deliberately reported as code `2` (inconclusive), never
 #### CI Example
 
 ```bash
-python host_header_scanner.py https://example.com --quiet -o report.json
+python headerhawk.py https://example.com --quiet -o report.json
 if [ $? -eq 1 ]; then
   echo "Header vulnerabilities detected — failing the build."
   exit 1
@@ -158,55 +160,55 @@ fi
 #### Scan a List of Targets
 
 ```bash
-python host_header_scanner.py --list targets.txt -o report.json
+python headerhawk.py --list targets.txt -o report.json
 ```
 
 #### Export SARIF for Code Scanning
 
 ```bash
-python host_header_scanner.py https://example.com -o findings.sarif
+python headerhawk.py https://example.com -o findings.sarif
 ```
 
 #### Throttle to Avoid a WAF
 
 ```bash
-python host_header_scanner.py http://example.com --threads 10 --rate 5
+python headerhawk.py http://example.com --threads 10 --rate 5
 ```
 
 #### Route Everything Through Burp (raw bypasses included)
 
 ```bash
-python host_header_scanner.py https://example.com --proxy http://127.0.0.1:8080 -k
+python headerhawk.py https://example.com --proxy http://127.0.0.1:8080 -k
 ```
 
 #### Test Additional Methods
 
 ```bash
-python host_header_scanner.py http://example.com --methods GET,POST
+python headerhawk.py http://example.com --methods GET,POST
 ```
 
 #### Send Custom Headers (e.g. Authentication)
 
 ```bash
-python host_header_scanner.py http://example.com -H "Authorization: Bearer <token>" -H "Cookie: session=abc"
+python headerhawk.py http://example.com -H "Authorization: Bearer <token>" -H "Cookie: session=abc"
 ```
 
 #### Confirm Blind SSRF via an OOB Listener
 
 ```bash
-python host_header_scanner.py http://example.com --oob xxxx.oast.fun --oob-poll-url https://api.listener.example/export
+python headerhawk.py http://example.com --oob xxxx.oast.fun --oob-poll-url https://api.listener.example/export
 ```
 
 #### Virtual Host Discovery with a Custom Wordlist
 
 ```bash
-python host_header_scanner.py http://example.com -w internal-vhosts.txt
+python headerhawk.py http://example.com -w internal-vhosts.txt
 ```
 
 #### Full Command
 
 ```bash
-python host_header_scanner.py http://example.com --threads 10 --timeout 8 --rate 20 --verbose 2 --output results.sarif --oob oob.example.com
+python headerhawk.py http://example.com --threads 10 --timeout 8 --rate 20 --verbose 2 --output results.sarif --oob oob.example.com
 ```
 
 ### Interrupting the Program
@@ -232,8 +234,8 @@ A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are alwa
 ### Sample Output
 
 ```
-HostHeaderScanner 1.11.0
-GitHub: https://github.com/kabiri-labs/HostHeaderScanner
+HeaderHawk 2.0.0
+GitHub: https://github.com/kabiri-labs/HeaderHawk
 
 Targets: 1
 Methods: GET
@@ -281,7 +283,7 @@ Contributions are welcome! Please follow these steps:
 2. **Clone Your Fork**: Clone your forked repository to your local machine.
 
    ```bash
-   git clone https://github.com/your-username/HostHeaderScanner.git
+   git clone https://github.com/your-username/HeaderHawk.git
    ```
 
 3. **Create a Branch**: Create a new branch for your feature or bug fix.
@@ -324,7 +326,7 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 ## Disclaimer
 
-**HostHeaderScanner** is intended for educational and authorized testing purposes only. Unauthorized use of this tool against systems without explicit permission is illegal and unethical. The developers assume no liability and are not responsible for any misuse or damage caused by this tool.
+**HeaderHawk** is intended for educational and authorized testing purposes only. Unauthorized use of this tool against systems without explicit permission is illegal and unethical. The developers assume no liability and are not responsible for any misuse or damage caused by this tool.
 
 ---
 
@@ -333,7 +335,7 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 For support or inquiries:
 
 - **Email**: [certification.kabiri@gmail.com](mailto:certification.kabiri@gmail.com)
-- **GitHub Issues**: [Create an Issue](https://github.com/kabiri-labs/HostHeaderScanner/issues)
+- **GitHub Issues**: [Create an Issue](https://github.com/kabiri-labs/HeaderHawk/issues)
 
 Feel free to open an issue or pull request for any bugs, feature requests, or questions.
 
