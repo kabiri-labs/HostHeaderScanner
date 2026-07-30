@@ -5,8 +5,6 @@
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
-> **HeaderHawk** was formerly **HostHeaderScanner**. The tool grew past the `Host` header to cover the whole family of routing, identity and caching headers, so it was renamed to match. The old `python host_header_scanner.py` entry point still works via a thin compatibility shim, but new usage should call `headerhawk.py`.
-
 **HeaderHawk** is a security scanner for **HTTP header–based vulnerabilities**. Modern stacks trust a whole family of request headers for routing, identity and caching — `Host`, the `X-Forwarded-*` headers, `Forwarded`, client-IP headers, URL-override headers and more — and each of them is an attack surface. HeaderHawk exercises that surface systematically and reports the bugs it uncovers: Host header injection, SSRF, confirmed web cache poisoning, access-control bypass, open redirects and hidden virtual hosts.
 
 Its focus is **signal over noise**. Findings are driven by evidence — unique per-scan markers, two-probe confirmation, real out-of-band correlation and stable-baseline differencing — so results are trustworthy enough to act on. And the output is built for real workflows: every finding carries a severity, reports export to JSON / Markdown / **SARIF 2.1.0**, and the process exit code lets a CI pipeline gate on the result.
