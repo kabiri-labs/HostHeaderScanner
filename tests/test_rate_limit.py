@@ -6,7 +6,7 @@ from unittest import mock
 
 import requests
 
-import host_header_scanner as hhs
+import headerhawk as hhs
 from tests.helpers import FakeResponse, FakeSession
 
 

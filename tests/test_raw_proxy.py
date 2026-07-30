@@ -4,7 +4,7 @@ import base64
 import unittest
 from unittest import mock
 
-import host_header_scanner as hhs
+import headerhawk as hhs
 from tests.helpers import FakeSession
 
 

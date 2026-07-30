@@ -1,4 +1,4 @@
-"""Shared test doubles for the HostHeaderScanner unit tests.
+"""Shared test doubles for the HeaderHawk unit tests.
 
 Everything here is fully offline: no sockets are opened and no real HTTP
 requests are made. The doubles only expose the small surface the code under

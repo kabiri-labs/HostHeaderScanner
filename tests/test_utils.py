@@ -8,7 +8,7 @@ import unittest
 
 import requests
 
-import host_header_scanner as hhs
+import headerhawk as hhs
 
 
 class ShellQuoteTests(unittest.TestCase):
