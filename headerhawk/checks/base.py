@@ -53,6 +53,11 @@ class BaseTest:
         self.enable_desync = enable_desync
         self.vulnerabilities_found = []
         self.all_results = []
+        # An evidence report must not claim a control passed when the check
+        # never got far enough to judge it, so a check tracks whether it
+        # actually obtained usable data.
+        self._requests_ok = 0
+        self._skip_reason = None
 
     def request(self, method, url=None, headers=None, allow_redirects=True):
         """Issue a single request, returning the response or None on failure."""
@@ -68,12 +73,39 @@ class BaseTest:
             )
             if self.stats is not None:
                 self.stats.record(True)
+            self._requests_ok += 1
             return response
         except requests.RequestException as exc:
             if self.stats is not None:
                 self.stats.record(
                     False, tls_error=isinstance(exc, requests.exceptions.SSLError))
             return None
+
+    def note_response(self):
+        """Record a successful exchange made outside ``request`` (raw sockets)."""
+        self._requests_ok += 1
+
+    def skip(self, reason):
+        """Record that the check could not complete, and why.
+
+        The reason is printed in the evidence report next to the controls that
+        were consequently left unassessed.
+        """
+        self._skip_reason = reason
+
+    @property
+    def assessed(self):
+        """True when the check got far enough to judge the controls it covers."""
+        return self._skip_reason is None and self._requests_ok > 0
+
+    @property
+    def skip_reason(self):
+        """Why the check did not assess anything, or None when it did."""
+        if self._skip_reason:
+            return self._skip_reason
+        if self._requests_ok == 0:
+            return "no request to the target succeeded"
+        return None
 
     def run_pool(self, worker, test_cases, description):
         """Run worker over test_cases with a bounded thread pool and progress bar."""

@@ -1,6 +1,6 @@
-# HeaderHawk v2.5.1
+# HeaderHawk v2.6.0
 
-[![Version](https://img.shields.io/badge/version-2.5.1-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.6.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
@@ -15,6 +15,7 @@ Its focus is **signal over noise**. Findings are driven by evidence — unique p
 
 - [Detection Coverage](#detection-coverage)
 - [Control Mapping](#control-mapping)
+- [Compliance Evidence](#compliance-evidence)
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
@@ -83,6 +84,40 @@ without one.
 
 ---
 
+## Compliance Evidence
+
+`--evidence report.md` (or `.json`) writes a report keyed by **requirement**
+rather than by finding — the question an assessor actually asks:
+
+| Status | Controls |
+| --- | --- |
+| Fail | 11 |
+| Not assessed | 0 |
+| Pass | 11 |
+
+Each control is listed with its framework, the requirement text, a link to the
+chapter it came from, and its evidence: the findings that failed it, or the
+checks that assessed it and found nothing.
+
+**A control is only reported as passing when a check that covers it actually
+completed.** This is the part that decides whether the report is worth anything.
+A scan of a host it could not reach produces no findings — reporting that as full
+compliance would be worse than producing no report at all. So anything the scan
+could not judge is listed as *not assessed*, with the reason:
+
+```
+### ASVS-5.0:4.2.1 — NOT ASSESSED
+- **Not assessed because:**
+  - HTTP Request Smuggling: a timing baseline could not be measured, so a delay
+    would have had nothing to be compared against
+```
+
+Findings whose type maps to no catalogued requirement are listed at the end
+rather than dropped, so nothing the scan found is left out of the report just
+because there is no requirement to hang it on.
+
+---
+
 ## Features
 
 ### Detection & accuracy
@@ -103,6 +138,7 @@ without one.
 
 ### Engine, workflow & reporting
 
+- **Evidence report by requirement**: `--evidence` answers *did this product meet each requirement, and how do you know?* — and never reports a requirement as met when the scan could not judge it. See [Compliance Evidence](#compliance-evidence).
 - **Control-mapped findings**: each finding cites the OWASP ASVS 5.0 requirements it is evidence against, in every report format — see [Control Mapping](#control-mapping).
 - **Severity-rated findings**: every finding carries a severity band (High / Medium / Low), shown in the summary and in every report format for quick triage.
 - **Reports in JSON, Markdown or SARIF 2.1.0**: chosen by output extension. SARIF includes per-rule `security-severity` scores and stable fingerprints, dropping straight into GitHub code scanning or a security dashboard.
@@ -176,6 +212,7 @@ python headerhawk.py http://example.com
 - `--enable-desync`: Confirm a suspected request-smuggling desync by planting a smuggled prefix and checking whether a following request comes back affected. **Intrusive** — see the warning below. Off by default; without it, smuggling is reported from timing alone.
 - `--fail-on <vuln|posture|any|none>`: Which findings make the process exit `1`. Default `vuln` — only proven vulnerabilities. `posture` counts missing response-header controls, `any` counts both, `none` never fails on findings (report-only runs).
 - `--quiet` or `-q`: Suppress progress bars, colours and status chatter (only findings and the final summary are printed). Auto-enabled when stdout is not a TTY, so piped/CI logs stay clean.
+- `--evidence <file>`: Write a per-control compliance evidence report (`.md` or `.json`) — every catalogued requirement reported as Pass, Fail or Not assessed, with its evidence or the reason it could not be judged. See [Compliance Evidence](#compliance-evidence).
 - `--output <file>` or `-o <file>`: Save results to a file. The format is chosen by extension: `.json`, `.sarif` (SARIF 2.1.0 for GitHub code scanning / security dashboards) or `.md`.
 
 ### Request Smuggling and `--enable-desync`
@@ -305,7 +342,7 @@ A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are alwa
 ### Sample Output
 
 ```
-HeaderHawk 2.5.1
+HeaderHawk 2.6.0
 GitHub: https://github.com/kabiri-labs/HeaderHawk
 
 Targets: 1

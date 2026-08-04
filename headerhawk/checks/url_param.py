@@ -52,6 +52,7 @@ class URLParameterTest(BaseTest):
         self.baseline_response = self.get_baseline_response()
         if self.baseline_response is None:
             print(Fore.YELLOW + "Baseline request failed; skipping URL parameter test.")
+            self.skip("the target did not answer the baseline request")
             return
         payloads = self.generate_payloads()
         test_cases = [

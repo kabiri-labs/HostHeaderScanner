@@ -25,8 +25,11 @@ from .checks.wordlists import (CACHE_STATUS_HEADERS, DEFAULT_VHOST_WORDLIST,
                                UNKEYED_HOST_HEADERS)
 from .cli import (load_targets, load_wordlist, main, parse_arguments,
                   parse_headers, scan_target)
-from .compliance import (CONTROLS, CONTROLS_BY_TEST, Control, controls_for,
-                         describe, summarise)
+from .compliance import (CONTROLS, CONTROLS_BY_TEST, STATUS_FAIL,
+                         STATUS_NOT_ASSESSED, STATUS_PASS, Control,
+                         ControlResult, build_evidence,
+                         controls_covered_by, controls_for, describe,
+                         summarise, unmapped_findings)
 from .core.exitcodes import (EXIT_ERROR, EXIT_FINDINGS, EXIT_OK,
                              determine_exit_code)
 from .core.findings import (CLASS_POSTURE, CLASS_VULNERABILITY,
@@ -45,6 +48,7 @@ from .posture import (RULES, Cookie, Issue, PostureRule, ResponseFacts,
                       ResponseHeaderPostureTest, parse_set_cookie,
                       set_cookie_values)
 from .report.repro import build_reproduction
+from .report.evidence import render_json, render_markdown, save_evidence
 from .report.sarif import build_sarif
 from .report.writer import save_results
 
@@ -64,8 +68,11 @@ __all__ = [
     "PATH_OVERRIDE_HEADERS", "UNKEYED_HOST_HEADERS",
     "load_targets", "load_wordlist", "main", "parse_arguments",
     "parse_headers", "scan_target",
-    "CONTROLS", "CONTROLS_BY_TEST", "Control", "controls_for", "describe",
-    "summarise",
+    "CONTROLS", "CONTROLS_BY_TEST", "Control", "ControlResult",
+    "STATUS_FAIL", "STATUS_NOT_ASSESSED", "STATUS_PASS",
+    "build_evidence", "controls_covered_by", "controls_for", "describe",
+    "summarise", "unmapped_findings",
+    "save_evidence", "render_markdown", "render_json",
     "EXIT_ERROR", "EXIT_FINDINGS", "EXIT_OK", "determine_exit_code",
     "OOBManager", "confirm_oob_interactions",
     "is_quiet", "print_summary", "resolve_quiet", "set_quiet", "status",

@@ -137,6 +137,7 @@ class RequestSmugglingTest(BaseTest):
             timed = self._send(self._well_formed())
             if timed.response is not None and not timed.timed_out:
                 samples.append(timed.elapsed)
+                self.note_response()
         if not samples:
             return False
         self.baseline = statistics.median(samples)
@@ -224,6 +225,7 @@ class RequestSmugglingTest(BaseTest):
 
     def run(self):
         if not self.connect_host:
+            self.skip("the target URL has no hostname to connect to")
             return
         if not self.quiet and self.enable_desync:
             print(Fore.YELLOW + Style.BRIGHT +
@@ -233,6 +235,8 @@ class RequestSmugglingTest(BaseTest):
                   "connection.")
         if not self.measure_baseline():
             status("Desync baseline could not be measured; skipping.")
+            self.skip("a timing baseline could not be measured, so a delay "
+                      "would have had nothing to be compared against")
             return
 
         # CL.TE is probed first on purpose. On a target that is CL.TE-vulnerable,

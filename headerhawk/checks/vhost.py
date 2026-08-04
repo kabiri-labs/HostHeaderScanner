@@ -45,6 +45,8 @@ class VhostDiscoveryTest(BaseTest):
                    if m is not None]
         if not samples:
             print(Fore.YELLOW + "Vhost baseline failed; skipping discovery.")
+            self.skip("the default virtual host did not answer, so there was "
+                      "no baseline to compare candidates against")
             return
         lengths = [length for _, length, _ in samples]
         self.baseline_status = samples[0][0]

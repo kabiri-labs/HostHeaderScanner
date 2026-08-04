@@ -79,6 +79,7 @@ class HostBypassTest(BaseTest):
 
     def run(self):
         if not self.connect_host:
+            self.skip("the target URL has no hostname to connect to")
             return
         token = uuid.uuid4().hex[:12]
         marker = f"{token}.example-collab.com"
@@ -94,6 +95,7 @@ class HostBypassTest(BaseTest):
         )
         if response is None:
             return
+        self.note_response()
         location = response.get("Location") or ""
         reflected_body = self.marker_token in response.text
         reflected_location = self.marker_token in location
