@@ -6,6 +6,7 @@ import uuid
 import requests
 from colorama import Fore, Style
 
+from ..compliance import controls_for
 from .severity import severity_for
 
 class OOBManager:
@@ -68,6 +69,7 @@ def confirm_oob_interactions(oob_manager, session, timeout, tests):
             "test_type": "Blind SSRF (OOB)",
             "test_result": "Vulnerable",
             "severity": severity_for("Blind SSRF (OOB)"),
+            "controls": list(controls_for("Blind SSRF (OOB)")),
             "url": owner.target_url,
             "method": "GET",
             "header_name": label,

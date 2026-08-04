@@ -6,6 +6,7 @@ import requests
 from colorama import Fore, Style
 from tqdm import tqdm
 
+from ..compliance import controls_for
 from ..core.severity import severity_for
 from ..report.repro import build_reproduction
 
@@ -78,6 +79,7 @@ class BaseTest:
         entry.setdefault("test_type", self.test_type)
         entry.setdefault("test_result", "Potentially Vulnerable")
         entry.setdefault("severity", severity_for(entry["test_type"]))
+        entry.setdefault("controls", list(controls_for(entry["test_type"])))
         entry["repro"] = build_reproduction(entry, self.target_url, self.insecure)
         self.vulnerabilities_found.append(entry)
         if self.verbose >= 1:

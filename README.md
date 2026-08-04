@@ -1,6 +1,6 @@
-# HeaderHawk v2.0.1
+# HeaderHawk v2.1.0
 
-[![Version](https://img.shields.io/badge/version-2.0.1-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.1.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
@@ -14,6 +14,7 @@ Its focus is **signal over noise**. Findings are driven by evidence — unique p
 ## Table of Contents
 
 - [Detection Coverage](#detection-coverage)
+- [Control Mapping](#control-mapping)
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
@@ -47,6 +48,30 @@ Each module targets a distinct class of header-driven weakness and the headers/v
 
 ---
 
+## Control Mapping
+
+Every finding carries the published security controls it is evidence against, so
+a report answers *which requirement does this fail?* without a manual crosswalk.
+
+| Finding | Controls |
+| ------- | -------- |
+| Host header injection / bypass, web cache poisoning | ASVS 5.0 **4.1.3** — an HTTP header field set by an intermediary layer cannot be overridden by the end user |
+| Access-control bypass | ASVS 5.0 **4.1.3**, **8.3.1** — authorization enforced at a trusted service layer |
+| SSRF, URL-parameter SSRF, blind SSRF | ASVS 5.0 **13.2.4**, **13.2.5** — allowlist of systems the application and server may call |
+| Open redirect | ASVS 5.0 **3.7.2** — redirects to another hostname only to allowlisted destinations |
+| Virtual host discovery | ASVS 5.0 **13.4.5** — internal documentation and monitoring endpoints not exposed |
+
+The mapping surfaces in every format: a **Control Coverage** table and a per-finding
+`Controls` line in Markdown, a `controls` field in JSON, and SARIF rule `tags` plus
+`help` text so GitHub code scanning shows the requirement alongside the alert.
+
+Control ids are transcribed from the published standard and each links to the
+chapter it came from. A finding type with no genuinely matching control is
+reported as unmapped rather than attached to an approximate requirement — an id
+that does not hold up under review is worse than an empty column.
+
+---
+
 ## Features
 
 ### Detection & accuracy
@@ -60,6 +85,7 @@ Each module targets a distinct class of header-driven weakness and the headers/v
 
 ### Engine, workflow & reporting
 
+- **Control-mapped findings**: each finding cites the OWASP ASVS 5.0 requirements it is evidence against, in every report format — see [Control Mapping](#control-mapping).
 - **Severity-rated findings**: every finding carries a severity band (High / Medium / Low), shown in the summary and in every report format for quick triage.
 - **Reports in JSON, Markdown or SARIF 2.1.0**: chosen by output extension. SARIF includes per-rule `security-severity` scores and stable fingerprints, dropping straight into GitHub code scanning or a security dashboard.
 - **CI-friendly exit codes**: `0` = clean, `1` = findings, `2` = the scan could not run (bad input, interrupted, or the target was unreachable) — an unreachable host is never mistaken for a clean result.
@@ -224,6 +250,7 @@ The scan ends with a summary of every finding. Each finding reports:
 - **URL & HTTP Method** — the request that triggered the finding.
 - **Header / Parameter & Payload** — the manipulated header (or URL parameter) and the value used.
 - **Status Code & Response Time** — the observed response.
+- **Controls** — the security requirements the finding is evidence against.
 - **Analysis** — why it was flagged (reflection location, weighted SSRF signals, header anomalies, confirmed poisoning, OOB interaction, …).
 - **Reproduce** — a copy-paste command that reproduces the finding.
 
@@ -232,7 +259,7 @@ A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are alwa
 ### Sample Output
 
 ```
-HeaderHawk 2.0.1
+HeaderHawk 2.1.0
 GitHub: https://github.com/kabiri-labs/HeaderHawk
 
 Targets: 1
@@ -284,6 +311,7 @@ entry point so `python headerhawk.py <target>` keeps working from a checkout.
 headerhawk/
 ├── cli.py                 # argument parsing and scan orchestration
 ├── _meta.py               # tool name, version, project URL
+├── compliance/            # control catalogue and finding -> control mapping
 ├── core/                  # engine: session, pacing, stats, severity, OOB, output
 ├── net/raw.py             # raw HTTP/1.1 client for wire-level checks
 ├── checks/                # one module per class of weakness
@@ -296,6 +324,8 @@ headerhawk/
 To add a detection module, subclass `BaseTest` in a new `checks/` module, give it
 a `test_type`, add that type to `SEVERITY_BY_TEST` in `core/severity.py`, and
 register the class in `checks/registry.py` — the CLI picks it up from there.
+Also give it an entry in `compliance/mapping.py` — an empty tuple is a valid
+answer, but the decision may not be skipped; a test enforces it.
 
 ### Workflow
 
