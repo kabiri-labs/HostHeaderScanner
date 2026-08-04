@@ -7,6 +7,8 @@ network.
 
 import unittest
 
+import requests
+
 import headerhawk as hhs
 from tests.helpers import FakeResponse, FakeSession
 
@@ -56,6 +58,28 @@ class SSRFLogicTests(unittest.TestCase):
         payloads = test.generate_payloads()
         self.assertIn("169.254.169.254", payloads)
         self.assertIn("127.0.0.1:8080", payloads)
+
+    def test_compute_baseline_measures_latency_and_learns_headers(self):
+        # Drives the real baseline path end to end: it is the only caller of the
+        # status() helper inside this module, so a broken import here would go
+        # unnoticed until the first live scan.
+        session = FakeSession(responses=[
+            FakeResponse(headers={"Server": "nginx", "X-Request-Id": "a"}),
+            FakeResponse(headers={"Server": "nginx", "X-Request-Id": "b"}),
+            FakeResponse(headers={"Server": "nginx", "X-Request-Id": "c"}),
+        ])
+        test = make_test(hhs.SSRFTest, session, quiet=True)
+        test.compute_baseline(samples=3)
+        self.assertIsNotNone(test.typical_delay)
+        self.assertEqual(test.stable_baseline_headers, {"Server": "nginx"})
+        self.assertIn("x-request-id", test.volatile_headers)
+
+    def test_compute_baseline_defaults_delay_when_every_request_fails(self):
+        session = FakeSession(responses=[requests.RequestException()] * 3)
+        test = make_test(hhs.SSRFTest, session, quiet=True)
+        test.compute_baseline(samples=3)
+        self.assertEqual(test.typical_delay, 1.0)
+        self.assertEqual(test.stable_baseline_headers, {})
 
     def test_header_anomalies_flag_new_and_changed(self):
         test = make_test(hhs.SSRFTest, FakeSession())

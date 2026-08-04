@@ -7,6 +7,8 @@ from unittest import mock
 import requests
 
 import headerhawk as hhs
+from headerhawk.core import ratelimit as hh_ratelimit
+from headerhawk.net import raw as hh_raw
 from tests.helpers import FakeResponse, FakeSession
 
 
@@ -32,7 +34,7 @@ class RateLimiterConfigTests(unittest.TestCase):
 
     def test_acquire_noop_when_disabled(self):
         # No sleep should happen when limiting is off.
-        with mock.patch.object(hhs.time, "sleep") as sleeper:
+        with mock.patch.object(hh_ratelimit.time, "sleep") as sleeper:
             hhs.RateLimiter(0).acquire()
         sleeper.assert_not_called()
 
@@ -41,8 +43,8 @@ class RateLimiterPacingTests(unittest.TestCase):
     def test_successive_slots_are_spaced(self):
         limiter = hhs.RateLimiter(10)  # 0.1s interval
         sleeps = []
-        with mock.patch.object(hhs.time, "monotonic", return_value=100.0), \
-             mock.patch.object(hhs.time, "sleep", side_effect=sleeps.append):
+        with mock.patch.object(hh_ratelimit.time, "monotonic", return_value=100.0), \
+             mock.patch.object(hh_ratelimit.time, "sleep", side_effect=sleeps.append):
             limiter.acquire()   # first slot: now, no wait
             limiter.acquire()   # second slot: +0.1
             limiter.acquire()   # third slot: +0.2
@@ -86,7 +88,7 @@ class RawClientAppliesLimiterTests(unittest.TestCase):
 
         from tests.test_raw_proxy import FakeSocket
         sock = FakeSocket([b"HTTP/1.1 200 OK\r\n\r\nbody", b""])
-        with mock.patch.object(hhs.socket, "create_connection", return_value=sock):
+        with mock.patch.object(hh_raw.socket, "create_connection", return_value=sock):
             client.send("http", "t", 80, "GET / HTTP/1.1", ["Host: t"])
         self.assertEqual(limiter.calls, 1)
 

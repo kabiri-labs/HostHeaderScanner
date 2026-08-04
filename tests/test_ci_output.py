@@ -8,6 +8,7 @@ from unittest import mock
 import requests
 
 import headerhawk as hhs
+from headerhawk.core import output as hh_output
 from tests.helpers import FakeResponse, FakeSession
 
 
@@ -25,7 +26,7 @@ class ResolveQuietTests(unittest.TestCase):
 class StatusTests(unittest.TestCase):
     def _capture(self, quiet):
         buffer = io.StringIO()
-        with mock.patch.object(hhs, "_QUIET", quiet):
+        with mock.patch.object(hh_output, "_QUIET", quiet):
             with contextlib.redirect_stdout(buffer):
                 hhs.status("hello")
         return buffer.getvalue()

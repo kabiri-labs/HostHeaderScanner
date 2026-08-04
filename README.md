@@ -1,6 +1,6 @@
-# HeaderHawk v2.0.0
+# HeaderHawk v2.0.1
 
-[![Version](https://img.shields.io/badge/version-2.0.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.0.1-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
@@ -232,7 +232,7 @@ A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are alwa
 ### Sample Output
 
 ```
-HeaderHawk 2.0.0
+HeaderHawk 2.0.1
 GitHub: https://github.com/kabiri-labs/HeaderHawk
 
 Targets: 1
@@ -274,6 +274,30 @@ Total findings: 1
 ---
 
 ## Contributing
+
+### Project layout
+
+The scanner is a package; `headerhawk.py` at the repository root is only a thin
+entry point so `python headerhawk.py <target>` keeps working from a checkout.
+
+```
+headerhawk/
+├── cli.py                 # argument parsing and scan orchestration
+├── _meta.py               # tool name, version, project URL
+├── core/                  # engine: session, pacing, stats, severity, OOB, output
+├── net/raw.py             # raw HTTP/1.1 client for wire-level checks
+├── checks/                # one module per class of weakness
+│   ├── base.py            # shared scaffolding (requests, thread pool, findings)
+│   ├── wordlists.py       # header and virtual-host name lists
+│   └── registry.py        # ordered list of checks the CLI runs
+└── report/                # JSON, SARIF and Markdown rendering
+```
+
+To add a detection module, subclass `BaseTest` in a new `checks/` module, give it
+a `test_type`, add that type to `SEVERITY_BY_TEST` in `core/severity.py`, and
+register the class in `checks/registry.py` — the CLI picks it up from there.
+
+### Workflow
 
 Contributions are welcome! Please follow these steps:
 

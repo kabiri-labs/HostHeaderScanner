@@ -1,0 +1,121 @@
+"""Host validation bypasses that require raw, un-normalised HTTP."""
+
+import uuid
+from urllib.parse import urlparse
+
+from .._meta import __tool_name__, __version__
+from ..net.raw import RawHTTPClient
+from .base import BaseTest
+
+class HostBypassTest(BaseTest):
+    """Host header validation bypasses that require raw, un-normalised HTTP.
+
+    Sends duplicate Host headers, absolute-URI request lines and indented
+    (line-folded) headers carrying a unique marker host, then checks whether
+    the marker is reflected back - proving the validation can be bypassed.
+    """
+
+    test_type = "Host Header Bypass"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        parsed = urlparse(self.target_url)
+        self.scheme = parsed.scheme or "http"
+        self.connect_host = parsed.hostname
+        self.connect_port = parsed.port or (443 if self.scheme == "https" else 80)
+        self.path = parsed.path or "/"
+        if parsed.query:
+            self.path += "?" + parsed.query
+        self.client = RawHTTPClient(timeout=self.timeout,
+                                    verify=not self._insecure(),
+                                    proxy=self._proxy(),
+                                    rate_limiter=self.rate_limiter)
+
+    def _insecure(self):
+        # Mirror the verification mode chosen for the shared requests session.
+        return self.session.verify is False
+
+    def _proxy(self):
+        # Reuse the proxy configured on the shared requests session so raw
+        # bypass traffic is captured by the same intercepting proxy (e.g. Burp).
+        proxies = getattr(self.session, "proxies", None) or {}
+        return proxies.get("https") or proxies.get("http")
+
+    def base_lines(self, host_value):
+        return [
+            f"Host: {host_value}",
+            f"User-Agent: Mozilla/5.0 (compatible; {__tool_name__}/{__version__})",
+            "Accept: */*",
+            "Connection: close",
+        ]
+
+    def techniques(self, marker):
+        host = self.original_host
+        # Each technique returns (name, request_line, header_lines).
+        return [
+            (
+                "Duplicate Host header",
+                f"GET {self.path} HTTP/1.1",
+                [f"Host: {host}", f"Host: {marker}",
+                 f"User-Agent: {__tool_name__}/{__version__}", "Connection: close"],
+            ),
+            (
+                "Absolute-URI request line",
+                f"GET {self.scheme}://{marker}{self.path} HTTP/1.1",
+                self.base_lines(host),
+            ),
+            (
+                "Indented (line-folded) Host header",
+                f"GET {self.path} HTTP/1.1",
+                [f"Host: {host}", f" Host: {marker}",
+                 f"User-Agent: {__tool_name__}/{__version__}", "Connection: close"],
+            ),
+            (
+                "Host override",
+                f"GET {self.path} HTTP/1.1",
+                self.base_lines(marker),
+            ),
+        ]
+
+    def run(self):
+        if not self.connect_host:
+            return
+        token = uuid.uuid4().hex[:12]
+        marker = f"{token}.example-collab.com"
+        self.marker_token = token
+        cases = [(name, line, headers)
+                 for name, line, headers in self.techniques(marker)]
+        self.run_pool(self.worker, cases, "Host Header Bypass Testing")
+
+    def worker(self, technique, request_line, header_lines):
+        response = self.client.send(
+            self.scheme, self.connect_host, self.connect_port,
+            request_line, header_lines, sni_host=self.connect_host,
+        )
+        if response is None:
+            return
+        location = response.get("Location") or ""
+        reflected_body = self.marker_token in response.text
+        reflected_location = self.marker_token in location
+        header_hits = [
+            name for name, value in response.headers
+            if name.lower() != "location" and self.marker_token in value
+        ]
+        if not (reflected_body or reflected_location or header_hits):
+            return
+        notes = [f"Bypass technique: {technique}."]
+        if reflected_location:
+            notes.append(f"Marker reflected in 'Location': {location}")
+        if reflected_body:
+            notes.append("Marker reflected in response body.")
+        if header_hits:
+            notes.append(f"Marker reflected in header(s): {header_hits}")
+        self.record({
+            "url": self.target_url,
+            "method": "GET",
+            "header_name": technique,
+            "payload": request_line,
+            "status_code": response.status_code,
+            "analysis": " ".join(notes),
+            "raw_request": request_line + "\r\n" + "\r\n".join(header_lines) + "\r\n\r\n",
+        })

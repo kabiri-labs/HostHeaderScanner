@@ -9,18 +9,19 @@ import unittest
 import requests
 
 import headerhawk as hhs
+from headerhawk.report import repro as hh_repro
 
 
 class ShellQuoteTests(unittest.TestCase):
     def test_wraps_plain_value_in_single_quotes(self):
-        self.assertEqual(hhs._shell_quote("abc"), "'abc'")
+        self.assertEqual(hh_repro._shell_quote("abc"), "'abc'")
 
     def test_escapes_embedded_single_quote(self):
         # The classic '\'' fence keeps the value safe inside single quotes.
-        self.assertEqual(hhs._shell_quote("a'b"), "'a'\\''b'")
+        self.assertEqual(hh_repro._shell_quote("a'b"), "'a'\\''b'")
 
     def test_stringifies_non_string_input(self):
-        self.assertEqual(hhs._shell_quote(80), "'80'")
+        self.assertEqual(hh_repro._shell_quote(80), "'80'")
 
 
 class ParseHeadersTests(unittest.TestCase):
