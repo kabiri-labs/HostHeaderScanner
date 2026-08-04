@@ -28,6 +28,7 @@ class AuthBypassTest(BaseTest):
     def run(self):
         baseline = self.request("GET", allow_redirects=False)
         if baseline is None:
+            self.skip("the target did not answer the baseline request")
             return
         self.baseline_status = baseline.status_code
         self.baseline_len = len(baseline.content)

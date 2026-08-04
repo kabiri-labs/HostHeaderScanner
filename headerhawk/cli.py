@@ -15,6 +15,7 @@ from .core.output import is_quiet, print_summary, resolve_quiet, set_quiet, stat
 from .core.ratelimit import RateLimiter
 from .core.session import build_session
 from .core.stats import RequestStats
+from .report.evidence import save_evidence
 from .report.writer import save_results
 
 
@@ -76,6 +77,11 @@ def parse_arguments():
                              "'any' counts both, 'none' never fails on findings")
     parser.add_argument("--output", "-o",
                         help="Output file (.json, .sarif or .md)")
+    parser.add_argument("--evidence",
+                        help="Write a per-control compliance evidence "
+                             "report to this path (.md or .json). Every "
+                             "catalogued requirement is reported as Pass, "
+                             "Fail or Not assessed, with the reason")
     args = parser.parse_args()
     if not 1 <= args.threads <= 20:
         parser.error("The --threads argument must be between 1 and 20.")
@@ -185,6 +191,8 @@ def main():
     except KeyboardInterrupt:
         print(Fore.YELLOW + "\n[!] Program interrupted by user.")
         save_results(args.output, all_tests, args.verbose)
+        save_evidence(args.evidence, all_tests, targets, stats=stats,
+                      version=__version__, tool_name=__tool_name__)
         sys.exit(EXIT_ERROR)
 
     if not all_tests:
@@ -192,6 +200,8 @@ def main():
         return EXIT_ERROR
 
     save_results(args.output, all_tests, args.verbose)
+    save_evidence(args.evidence, all_tests, targets, stats=stats,
+                  version=__version__, tool_name=__tool_name__)
     print_summary(all_tests, targets, stats)
     # The exit code gates on the classes the caller asked for, so adding posture
     # checks does not turn an existing pipeline red on its own.
