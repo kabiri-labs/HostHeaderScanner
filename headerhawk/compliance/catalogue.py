@@ -26,6 +26,35 @@ _ENTRIES = [
         "destinations.",
         _V3),
     Control(
+        "ASVS-5.0:3.4.1", ASVS, "3.4.1",
+        "A Strict-Transport-Security header field is included on all responses, "
+        "with a maximum age of at least one year.",
+        _V3),
+    Control(
+        "ASVS-5.0:3.4.3", ASVS, "3.4.3",
+        "A Content-Security-Policy response header field is set, including the "
+        "directives object-src 'none' and base-uri 'none'.",
+        _V3),
+    Control(
+        "ASVS-5.0:3.4.4", ASVS, "3.4.4",
+        "All responses contain an X-Content-Type-Options: nosniff header field.",
+        _V3),
+    Control(
+        "ASVS-5.0:3.4.5", ASVS, "3.4.5",
+        "A Referrer-Policy header field prevents sensitive URL data leaking to "
+        "third-party services.",
+        _V3),
+    Control(
+        "ASVS-5.0:3.4.6", ASVS, "3.4.6",
+        "The frame-ancestors directive of the Content-Security-Policy header "
+        "field prevents unauthorized embedding.",
+        _V3),
+    Control(
+        "ASVS-5.0:3.4.8", ASVS, "3.4.8",
+        "Responses include a Cross-Origin-Opener-Policy header field with the "
+        "same-origin directive.",
+        _V3),
+    Control(
         "ASVS-5.0:4.1.3", ASVS, "4.1.3",
         "An HTTP header field set by an intermediary layer - a load balancer, "
         "web proxy or backend-for-frontend - cannot be overridden by the end "
@@ -45,6 +74,11 @@ _ENTRIES = [
         "ASVS-5.0:13.2.5", ASVS, "13.2.5",
         "The web or application server is configured with an allowlist of "
         "systems it may send requests to or load data from.",
+        _V13),
+    Control(
+        "ASVS-5.0:13.4.6", ASVS, "13.4.6",
+        "The application does not expose detailed version information of "
+        "backend components.",
         _V13),
     Control(
         "ASVS-5.0:13.4.5", ASVS, "13.4.5",

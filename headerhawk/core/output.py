@@ -2,6 +2,8 @@
 
 from colorama import Fore, Style
 
+from .findings import CLASS_POSTURE, CLASS_VULNERABILITY, count_by_class
+
 # Suppresses progress/status chatter (set from --quiet / non-TTY detection).
 # Findings and the final summary are never suppressed - only the noise around
 # them - so piping the tool into a log stays useful.
@@ -43,7 +45,10 @@ def print_summary(all_tests, targets, stats):
     print(Fore.CYAN + f"Targets scanned: {scanned}/{len(targets)}")
     print(Fore.CYAN + f"Requests: {stats.succeeded}/{stats.total} succeeded "
           f"({stats.failed} failed).")
-    print(Fore.CYAN + f"Total findings: {total_vulns}")
+    counts = count_by_class(all_tests)
+    print(Fore.CYAN + f"Total findings: {total_vulns} "
+          f"({counts.get(CLASS_VULNERABILITY, 0)} vulnerability, "
+          f"{counts.get(CLASS_POSTURE, 0)} posture)")
 
     by_type = {}
     for test in all_tests:

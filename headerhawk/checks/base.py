@@ -7,13 +7,27 @@ from colorama import Fore, Style
 from tqdm import tqdm
 
 from ..compliance import controls_for
+from ..core.findings import DEFAULT_FINDING_CLASS
 from ..core.severity import severity_for
 from ..report.repro import build_reproduction
+
 
 class BaseTest:
     """Shared scaffolding for every test type."""
 
     test_type = "Base"
+    # Findings default to the vulnerability class; posture checks override it.
+    finding_class = DEFAULT_FINDING_CLASS
+
+    @classmethod
+    def emitted_types(cls):
+        """Finding types this check can emit.
+
+        Usually just its own, but a check that reports several distinct
+        issues from one pass overrides this so the severity and compliance
+        maps can be checked for completeness against it.
+        """
+        return (cls.test_type,)
 
     def __init__(self, target_url, original_host, session, oob_domain=None,
                  methods=None, threads=5, verbose=1, timeout=10,
@@ -80,6 +94,7 @@ class BaseTest:
         entry.setdefault("test_result", "Potentially Vulnerable")
         entry.setdefault("severity", severity_for(entry["test_type"]))
         entry.setdefault("controls", list(controls_for(entry["test_type"])))
+        entry.setdefault("finding_class", self.finding_class)
         entry["repro"] = build_reproduction(entry, self.target_url, self.insecure)
         self.vulnerabilities_found.append(entry)
         if self.verbose >= 1:

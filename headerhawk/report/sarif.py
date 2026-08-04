@@ -5,6 +5,7 @@ import re
 
 from .._meta import __github_url__, __tool_name__, __version__
 from ..compliance import controls_for, describe
+from ..core.findings import finding_class_of
 from ..core.severity import DEFAULT_SEVERITY, SEVERITY_META, severity_for
 
 
@@ -21,6 +22,7 @@ def _control_help(control_ids):
     if not lines:
         return ""
     return "Verifies:\n" + "\n".join(lines)
+
 
 def _rule_id(test_type):
     """Turn a human test-type name into a stable SARIF rule id slug."""
@@ -79,6 +81,7 @@ def build_sarif(results, version=None):
                 "header_or_parameter": header_or_param,
                 "status_code": result.get("status_code", ""),
                 "controls": list(control_ids),
+                "finding_class": finding_class_of(result),
             },
             "partialFingerprints": {
                 "hostHeaderScanner/v1": _fingerprint(

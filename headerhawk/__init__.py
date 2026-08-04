@@ -14,7 +14,7 @@ from .checks.cache_poisoning import CachePoisoningTest
 from .checks.host_bypass import HostBypassTest
 from .checks.host_injection import HostInjectionTest
 from .checks.open_redirect import OpenRedirectTest
-from .checks.registry import CHECKS
+from .checks.registry import CHECKS, finding_types
 from .checks.ssrf import SSRFTest
 from .checks.url_param import URLParameterTest
 from .checks.vhost import VhostDiscoveryTest
@@ -27,6 +27,9 @@ from .compliance import (CONTROLS, CONTROLS_BY_TEST, Control, controls_for,
                          describe, summarise)
 from .core.exitcodes import (EXIT_ERROR, EXIT_FINDINGS, EXIT_OK,
                              determine_exit_code)
+from .core.findings import (CLASS_POSTURE, CLASS_VULNERABILITY,
+                            count_by_class, finding_class_of,
+                            gated_finding_count)
 from .core.oob import OOBManager, confirm_oob_interactions
 from .core.output import (is_quiet, print_summary, resolve_quiet, set_quiet,
                           status)
@@ -36,6 +39,7 @@ from .core.severity import (DEFAULT_SEVERITY, SEVERITY_BY_TEST, SEVERITY_META,
                             severity_for)
 from .core.stats import RequestStats
 from .net.raw import RawHTTPClient, RawResponse
+from .posture import RULES, PostureRule, ResponseHeaderPostureTest
 from .report.repro import build_reproduction
 from .report.sarif import build_sarif
 from .report.writer import save_results
@@ -46,7 +50,10 @@ __all__ = [
     "__github_url__", "__tool_name__", "__version__",
     "AuthBypassTest", "BaseTest", "CachePoisoningTest", "HostBypassTest",
     "HostInjectionTest", "OpenRedirectTest", "SSRFTest", "URLParameterTest",
-    "VhostDiscoveryTest", "CHECKS",
+    "VhostDiscoveryTest", "CHECKS", "finding_types",
+    "ResponseHeaderPostureTest", "PostureRule", "RULES",
+    "CLASS_POSTURE", "CLASS_VULNERABILITY", "count_by_class",
+    "finding_class_of", "gated_finding_count",
     "CACHE_STATUS_HEADERS", "DEFAULT_VHOST_WORDLIST", "HOST_HEADERS",
     "PATH_OVERRIDE_HEADERS", "UNKEYED_HOST_HEADERS",
     "load_targets", "load_wordlist", "main", "parse_arguments",
