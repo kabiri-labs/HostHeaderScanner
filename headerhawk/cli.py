@@ -60,6 +60,14 @@ def parse_arguments():
     parser.add_argument("--quiet", "-q", action="store_true",
                         help="Suppress progress bars and status output "
                              "(auto-enabled when stdout is not a TTY)")
+    parser.add_argument("--enable-desync", dest="enable_desync",
+                        action="store_true",
+                        help="Confirm a suspected request-smuggling desync by "
+                             "planting a smuggled prefix and checking whether a "
+                             "following request is affected. INTRUSIVE: the "
+                             "prefix can attach to another user's request and "
+                             "corrupt or misroute live traffic. Without it, "
+                             "smuggling is reported from timing alone")
     parser.add_argument("--fail-on", dest="fail_on",
                         choices=sorted(FAIL_ON_CLASSES), default=DEFAULT_FAIL_ON,
                         help="Which findings make the process exit 1: "
@@ -121,7 +129,8 @@ def scan_target(url, args, session, methods, wordlist, stats, rate_limiter=None)
     common = dict(session=session, oob_domain=args.oob, methods=methods,
                   threads=args.threads, verbose=args.verbose, timeout=args.timeout,
                   oob_manager=oob_manager, wordlist=wordlist, insecure=args.insecure,
-                  stats=stats, quiet=is_quiet(), rate_limiter=rate_limiter)
+                  stats=stats, quiet=is_quiet(), rate_limiter=rate_limiter,
+                  enable_desync=args.enable_desync)
     tests = [check(url, hostname, **common) for check in CHECKS]
     for test in tests:
         test.run()

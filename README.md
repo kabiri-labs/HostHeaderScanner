@@ -1,6 +1,6 @@
-# HeaderHawk v2.4.0
+# HeaderHawk v2.5.0
 
-[![Version](https://img.shields.io/badge/version-2.4.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.5.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
@@ -45,6 +45,7 @@ Each module targets a distinct class of header-driven weakness and the headers/v
 | **Open redirect** | `Host`-driven redirects whose `Location` host matches the injected value |
 | **URL-parameter SSRF** | `url`, `next`, `redirect`, `dest`, `uri`, `path`, … against internal targets, with baseline differencing |
 | **Virtual host discovery** | `Host`-header brute force (built-in or custom wordlist) with two-probe confirmation |
+| **HTTP request smuggling** | `Content-Length` / `Transfer-Encoding` disagreement between front-end and back-end — CL.TE and TE.CL, detected by timing |
 | **CORS origin validation** | `Origin` reflection, `null` origin, prefix / suffix / trailing-dot / subdomain allowlist bypasses and plaintext-origin trust — each confirmed by the server echoing the origin back in `Access-Control-Allow-Origin` |
 | **Response header posture** | `Strict-Transport-Security`, `frame-ancestors` / `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy`, and version banners (`Server`, `X-Powered-By`, …) |
 | **Content-Security-Policy analysis** | `object-src` / `base-uri`, effective `script-src` (`'unsafe-inline'`, `'unsafe-eval'`, broad sources — with nonce, hash and `'strict-dynamic'` semantics applied), and violation reporting |
@@ -64,6 +65,7 @@ a report answers *which requirement does this fail?* without a manual crosswalk.
 | SSRF, URL-parameter SSRF, blind SSRF | ASVS 5.0 **13.2.4**, **13.2.5** — allowlist of systems the application and server may call |
 | Open redirect | ASVS 5.0 **3.7.2** — redirects to another hostname only to allowlisted destinations |
 | CORS misconfiguration | ASVS 5.0 **3.4.2** — `Access-Control-Allow-Origin` is a fixed value or validated against an allowlist |
+| HTTP request smuggling | ASVS 5.0 **4.2.1**, **4.2.2** — message boundaries determined consistently, `Content-Length` consistent with the body |
 | Virtual host discovery | ASVS 5.0 **13.4.5** — internal documentation and monitoring endpoints not exposed |
 | Response header posture | ASVS 5.0 **3.4.1** (HSTS), **3.4.3** (CSP), **3.4.4** (nosniff), **3.4.5** (Referrer-Policy), **3.4.6** (frame-ancestors), **3.4.7** (CSP reporting), **3.4.8** (COOP), **13.4.6** (version disclosure) |
 | Cookie attributes | ASVS 5.0 **3.3.1** (Secure + name prefix), **3.3.2** (SameSite), **3.3.3** (`__Host-` prefix), **3.3.4** (HttpOnly on session values), **3.3.5** (size limit) |
@@ -94,6 +96,8 @@ without one.
 - **Confirmed cache poisoning, not just reflection**: a cache-buster is planted, the poisoning request is sent through an unkeyed header, and the URL is re-requested *without* it; only a surviving marker (served from cache) is reported, with `X-Cache` / `Age` / `CF-Cache-Status` context.
 - **Weighted SSRF scoring**: response-time deviation, internal-target indicators (`root:x:0:0:`, cloud-metadata markers, connection errors) and header anomalies are combined behind a threshold. Header anomalies are measured only against headers proven stable across baseline samples, so per-request identifiers (request ids, tracing, `CF-RAY`, nonces) are learned as volatile and ignored.
 - **Confirmed virtual-host discovery**: the default vhost is sampled repeatedly to learn its natural page-to-page variance; a candidate is reported only when a status, length or title difference is confirmed on a second probe — dynamic content does not masquerade as a hidden host.
+- **Request smuggling, detected without smuggling anything**: a probe whose body deliberately disagrees with its own `Content-Length` leaves whichever server loses the disagreement waiting for bytes that never arrive. A hang is only reported after two consecutive probes agree *and* a well-formed request in between still returns normally — which is what separates a desync from a target that merely became slow. Nothing is planted on the connection, so a scan does not tamper with other users' traffic.
+- **Honest about what timing proves**: every smuggling finding carries a `Confirming this` note stating that a delay is evidence rather than proof, what to run for certainty, and what that costs. It is printed to the console and included in every report format.
 - **Proven CORS findings**: a unique per-scan origin that cannot exist is sent as `Origin`; only the server echoing it back counts. Severity follows `Access-Control-Allow-Credentials`, since a permissive allowlist that also allows credentials means an attacker's page can read authenticated responses. A server that reflects *anything* is reported once as reflection rather than five times over as each narrower bypass, and a fixed allowlist — or a bare `*` without credentials, which is correct for a public endpoint — produces nothing.
 - **Real out-of-band confirmation**: embeds a per-scan correlation id into OOB payloads and, given a listener export URL, polls it to confirm blind SSRF. Works with interactsh, webhook.site, RequestBin, Burp Collaborator exports and custom sinks.
 
@@ -169,9 +173,31 @@ python headerhawk.py http://example.com
 - `--proxy <url>`: Route traffic through an upstream proxy (e.g. `http://127.0.0.1:8080`), including the raw-HTTP bypass tests, which are tunnelled via `CONNECT`. Supports optional `user:pass@` basic auth.
 - `--insecure` or `-k`: Disable TLS certificate verification.
 - `--verbose <level>`: Verbosity level (1 or 2). Level 2 also records non-findings for the report.
+- `--enable-desync`: Confirm a suspected request-smuggling desync by planting a smuggled prefix and checking whether a following request comes back affected. **Intrusive** — see the warning below. Off by default; without it, smuggling is reported from timing alone.
 - `--fail-on <vuln|posture|any|none>`: Which findings make the process exit `1`. Default `vuln` — only proven vulnerabilities. `posture` counts missing response-header controls, `any` counts both, `none` never fails on findings (report-only runs).
 - `--quiet` or `-q`: Suppress progress bars, colours and status chatter (only findings and the final summary are printed). Auto-enabled when stdout is not a TTY, so piped/CI logs stay clean.
 - `--output <file>` or `-o <file>`: Save results to a file. The format is chosen by extension: `.json`, `.sarif` (SARIF 2.1.0 for GitHub code scanning / security dashboards) or `.md`.
+
+### Request Smuggling and `--enable-desync`
+
+Smuggling detection is **timing-based by default and sends nothing that can affect
+another user**. A probe is shaped so that the server which loses the
+`Content-Length` / `Transfer-Encoding` disagreement waits for a body that never
+arrives; the delay is the signal. CL.TE is always probed before TE.CL, because on
+a CL.TE-vulnerable target the TE.CL probe would leave the front-end holding a
+partial request and disrupt other users.
+
+A delay is strong evidence but not proof — a slow upstream, a rate limiter or a
+stalled connection pool produce the same symptom, and a target with no front-end
+cannot desync at all. Findings say so in a `Confirming this` note rather than
+overstating themselves.
+
+`--enable-desync` buys certainty and costs restraint. It plants a smuggled prefix
+and then issues a normal request to see whether the second comes back affected —
+the prefix sits on the back-end connection and **can attach itself to another
+user's request, corrupting or misrouting live traffic**. Use it only against a
+system you are authorised to disrupt, and preferably outside peak hours. A
+confirmed finding is reported as `Vulnerable` rather than `Potentially Vulnerable`.
 
 ### Exit Codes
 
@@ -277,7 +303,7 @@ A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are alwa
 ### Sample Output
 
 ```
-HeaderHawk 2.4.0
+HeaderHawk 2.5.0
 GitHub: https://github.com/kabiri-labs/HeaderHawk
 
 Targets: 1
@@ -331,7 +357,7 @@ headerhawk/
 ├── _meta.py               # tool name, version, project URL
 ├── compliance/            # control catalogue and finding -> control mapping
 ├── core/                  # engine: session, pacing, stats, severity, OOB, output
-├── net/raw.py             # raw HTTP/1.1 client for wire-level checks
+├── net/raw.py             # raw HTTP/1.1 client, with timed byte-exact sends
 ├── posture/               # response-side assessment
 │   ├── facts.py           # the response view a rule is given
 │   ├── rules.py           # header and CSP rules

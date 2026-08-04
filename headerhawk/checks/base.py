@@ -32,7 +32,8 @@ class BaseTest:
     def __init__(self, target_url, original_host, session, oob_domain=None,
                  methods=None, threads=5, verbose=1, timeout=10,
                  oob_manager=None, wordlist=None, insecure=False,
-                 stats=None, quiet=False, rate_limiter=None):
+                 stats=None, quiet=False, rate_limiter=None,
+                 enable_desync=False):
         self.target_url = target_url
         self.original_host = original_host
         self.session = session
@@ -47,6 +48,9 @@ class BaseTest:
         self.stats = stats
         self.quiet = quiet
         self.rate_limiter = rate_limiter
+        # Only the desync check acts on this; it is accepted here so the CLI
+        # can hand every check the same options.
+        self.enable_desync = enable_desync
         self.vulnerabilities_found = []
         self.all_results = []
 
@@ -114,6 +118,8 @@ class BaseTest:
         if entry.get("response_time") is not None:
             print(f"Response Time: {entry['response_time']:.2f}s")
         print(Fore.YELLOW + f"Analysis: {entry.get('analysis')}")
+        if entry.get("confirmation"):
+            print(Fore.CYAN + f"Confirming this: {entry['confirmation']}")
         if entry.get("repro"):
             print(Fore.GREEN + f"Reproduce: {entry['repro']}")
         print(Fore.RED + "-" * 80)

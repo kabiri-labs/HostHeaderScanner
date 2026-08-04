@@ -16,6 +16,7 @@ from .checks.host_bypass import HostBypassTest
 from .checks.host_injection import HostInjectionTest
 from .checks.open_redirect import OpenRedirectTest
 from .checks.registry import CHECKS, finding_types
+from .checks.smuggling import RequestSmugglingTest
 from .checks.ssrf import SSRFTest
 from .checks.url_param import URLParameterTest
 from .checks.vhost import VhostDiscoveryTest
@@ -39,7 +40,7 @@ from .core.session import build_session
 from .core.severity import (DEFAULT_SEVERITY, SEVERITY_BY_TEST, SEVERITY_META,
                             severity_for)
 from .core.stats import RequestStats
-from .net.raw import RawHTTPClient, RawResponse
+from .net.raw import RawHTTPClient, RawResponse, TimedResponse
 from .posture import (RULES, Cookie, Issue, PostureRule, ResponseFacts,
                       ResponseHeaderPostureTest, parse_set_cookie,
                       set_cookie_values)
@@ -54,7 +55,7 @@ __all__ = [
     "AuthBypassTest", "BaseTest", "CachePoisoningTest", "CORSTest",
     "HostBypassTest",
     "HostInjectionTest", "OpenRedirectTest", "SSRFTest", "URLParameterTest",
-    "VhostDiscoveryTest", "CHECKS", "finding_types",
+    "VhostDiscoveryTest", "RequestSmugglingTest", "CHECKS", "finding_types",
     "ResponseHeaderPostureTest", "PostureRule", "RULES", "Issue",
     "Cookie", "ResponseFacts", "parse_set_cookie", "set_cookie_values",
     "CLASS_POSTURE", "CLASS_VULNERABILITY", "count_by_class",
@@ -70,6 +71,6 @@ __all__ = [
     "is_quiet", "print_summary", "resolve_quiet", "set_quiet", "status",
     "RateLimiter", "build_session", "RequestStats",
     "DEFAULT_SEVERITY", "SEVERITY_BY_TEST", "SEVERITY_META", "severity_for",
-    "RawHTTPClient", "RawResponse",
+    "RawHTTPClient", "RawResponse", "TimedResponse",
     "build_reproduction", "build_sarif", "save_results",
 ]

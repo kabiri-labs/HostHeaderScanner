@@ -26,6 +26,7 @@ class CheckRegistryTests(unittest.TestCase):
         "SSRF",
         "URL Parameter SSRF",
         "Open Redirect",
+        "HTTP Request Smuggling",
     ]
 
     def test_registry_order_is_stable(self):

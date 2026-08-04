@@ -3,7 +3,14 @@
 import base64
 import socket
 import ssl
+import time
+from collections import namedtuple
 from urllib.parse import urlparse
+
+# A raw reply plus how long it took and whether the peer simply never answered.
+# The elapsed time is what a timing-based desync probe reads; timed_out
+# distinguishes "still holding the request open" from "answered slowly".
+TimedResponse = namedtuple("TimedResponse", "response elapsed timed_out")
 
 class RawResponse:
     """Lightweight response object produced by the raw HTTP client."""
@@ -96,15 +103,31 @@ class RawHTTPClient:
         return len(parts) > 1 and parts[1].startswith("2")
 
     def send(self, scheme, host, port, request_line, header_lines, sni_host=None):
+        request = request_line + "\r\n" + "\r\n".join(header_lines) + "\r\n\r\n"
+        timed = self.send_raw(scheme, host, port, request, sni_host=sni_host)
+        return timed.response
+
+    def send_raw(self, scheme, host, port, request, sni_host=None,
+                 read_timeout=None):
+        """Send a request byte-for-byte and time how long the reply takes.
+
+        Nothing is appended to ``request``: a body that deliberately disagrees
+        with its own Content-Length is the whole point of the desync probes, so
+        the caller owns every byte. Returns a ``TimedResponse`` whose
+        ``timed_out`` says whether the peer went quiet rather than answering,
+        which is the signal a timing-based desync test is looking for.
+        """
         if self.rate_limiter is not None:
             self.rate_limiter.acquire()
-        request = request_line + "\r\n" + "\r\n".join(header_lines) + "\r\n\r\n"
+        timeout = self.timeout if read_timeout is None else read_timeout
         raw = b""
         sock = None
+        timed_out = False
+        started = time.monotonic()
         try:
             sock = self._open_socket(host, port)
             if sock is None:
-                return None
+                return TimedResponse(None, time.monotonic() - started, False)
             if scheme == "https":
                 context = ssl.create_default_context()
                 if not self.verify:
@@ -112,24 +135,30 @@ class RawHTTPClient:
                     context.verify_mode = ssl.CERT_NONE
                 sock = context.wrap_socket(sock, server_hostname=sni_host or host)
             sock.sendall(request.encode("latin-1", "ignore"))
-            sock.settimeout(self.timeout)
+            sock.settimeout(timeout)
             while len(raw) < self.max_bytes:
                 try:
                     chunk = sock.recv(8192)
                 except (socket.timeout, ssl.SSLError):
+                    # No reply within the budget. With nothing received at all
+                    # the peer is still holding the request open, which is the
+                    # delay a desync probe provokes; a partial reply just means
+                    # the response ended without the connection closing.
+                    timed_out = not raw
                     break
                 if not chunk:
                     break
                 raw += chunk
         except OSError:
-            return None
+            return TimedResponse(None, time.monotonic() - started, False)
         finally:
             if sock is not None:
                 try:
                     sock.close()
                 except OSError:
                     pass
-        return self._parse(raw)
+        return TimedResponse(self._parse(raw), time.monotonic() - started,
+                             timed_out)
 
     @staticmethod
     def _parse(raw):
