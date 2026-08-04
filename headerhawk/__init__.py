@@ -39,7 +39,9 @@ from .core.severity import (DEFAULT_SEVERITY, SEVERITY_BY_TEST, SEVERITY_META,
                             severity_for)
 from .core.stats import RequestStats
 from .net.raw import RawHTTPClient, RawResponse
-from .posture import RULES, PostureRule, ResponseHeaderPostureTest
+from .posture import (RULES, Cookie, Issue, PostureRule, ResponseFacts,
+                      ResponseHeaderPostureTest, parse_set_cookie,
+                      set_cookie_values)
 from .report.repro import build_reproduction
 from .report.sarif import build_sarif
 from .report.writer import save_results
@@ -51,7 +53,8 @@ __all__ = [
     "AuthBypassTest", "BaseTest", "CachePoisoningTest", "HostBypassTest",
     "HostInjectionTest", "OpenRedirectTest", "SSRFTest", "URLParameterTest",
     "VhostDiscoveryTest", "CHECKS", "finding_types",
-    "ResponseHeaderPostureTest", "PostureRule", "RULES",
+    "ResponseHeaderPostureTest", "PostureRule", "RULES", "Issue",
+    "Cookie", "ResponseFacts", "parse_set_cookie", "set_cookie_values",
     "CLASS_POSTURE", "CLASS_VULNERABILITY", "count_by_class",
     "finding_class_of", "gated_finding_count",
     "CACHE_STATUS_HEADERS", "DEFAULT_VHOST_WORDLIST", "HOST_HEADERS",

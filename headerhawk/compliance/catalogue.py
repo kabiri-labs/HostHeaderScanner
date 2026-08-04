@@ -26,6 +26,30 @@ _ENTRIES = [
         "destinations.",
         _V3),
     Control(
+        "ASVS-5.0:3.3.1", ASVS, "3.3.1",
+        "Cookies have the Secure attribute set and use the __Secure- or "
+        "__Host- name prefix.",
+        _V3),
+    Control(
+        "ASVS-5.0:3.3.2", ASVS, "3.3.2",
+        "Each cookie's SameSite attribute is set according to the purpose of "
+        "the cookie, to limit exposure to user interface redress attacks.",
+        _V3),
+    Control(
+        "ASVS-5.0:3.3.3", ASVS, "3.3.3",
+        "Cookies use the __Host- name prefix unless they are explicitly "
+        "designed for sharing with other hosts.",
+        _V3),
+    Control(
+        "ASVS-5.0:3.3.4", ASVS, "3.3.4",
+        "Session tokens and sensitive values have the HttpOnly attribute set "
+        "and are transferred only via the Set-Cookie header field.",
+        _V3),
+    Control(
+        "ASVS-5.0:3.3.5", ASVS, "3.3.5",
+        "A cookie's name and value combined do not exceed 4096 bytes.",
+        _V3),
+    Control(
         "ASVS-5.0:3.4.1", ASVS, "3.4.1",
         "A Strict-Transport-Security header field is included on all responses, "
         "with a maximum age of at least one year.",
@@ -48,6 +72,11 @@ _ENTRIES = [
         "ASVS-5.0:3.4.6", ASVS, "3.4.6",
         "The frame-ancestors directive of the Content-Security-Policy header "
         "field prevents unauthorized embedding.",
+        _V3),
+    Control(
+        "ASVS-5.0:3.4.7", ASVS, "3.4.7",
+        "The Content-Security-Policy header field specifies a location to "
+        "report violations to.",
         _V3),
     Control(
         "ASVS-5.0:3.4.8", ASVS, "3.4.8",

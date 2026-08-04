@@ -21,6 +21,14 @@ SEVERITY_BY_TEST = {
     "Cross-Origin-Opener-Policy": "Low",
     "Permissions-Policy": "Low",
     "Version Disclosure": "Low",
+    "CSP Script Sources": "Medium",
+    "CSP Violation Reporting": "Low",
+    # Cookie attributes.
+    "Cookie HttpOnly Attribute": "Medium",
+    "Cookie Secure Attribute": "Medium",
+    "Cookie SameSite Attribute": "Low",
+    "Cookie Name Prefix": "Low",
+    "Cookie Size": "Low",
 }
 DEFAULT_SEVERITY = "Medium"
 

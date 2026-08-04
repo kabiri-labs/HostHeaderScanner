@@ -30,6 +30,16 @@ CONTROLS_BY_TEST = {
     "Frame Protection": ("ASVS-5.0:3.4.6",),
     "Cross-Origin-Opener-Policy": ("ASVS-5.0:3.4.8",),
     "Version Disclosure": ("ASVS-5.0:13.4.6",),
+    # 3.4.3 is what makes a policy meaningful, so the deeper script-source
+    # analysis verifies the same requirement as the policy's presence.
+    "CSP Script Sources": ("ASVS-5.0:3.4.3",),
+    "CSP Violation Reporting": ("ASVS-5.0:3.4.7",),
+    # Cookie attributes.
+    "Cookie HttpOnly Attribute": ("ASVS-5.0:3.3.4",),
+    "Cookie Secure Attribute": ("ASVS-5.0:3.3.1",),
+    "Cookie SameSite Attribute": ("ASVS-5.0:3.3.2",),
+    "Cookie Name Prefix": ("ASVS-5.0:3.3.1", "ASVS-5.0:3.3.3"),
+    "Cookie Size": ("ASVS-5.0:3.3.5",),
     # ASVS 5.0 has no Permissions-Policy requirement, so this stays unmapped
     # rather than borrowing a neighbouring one.
     "Permissions-Policy": (),
