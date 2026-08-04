@@ -9,13 +9,14 @@ future move from silently breaking either.
 import unittest
 
 import headerhawk as hhs
-from headerhawk.checks.registry import CHECKS
+from headerhawk.checks.registry import CHECKS, finding_types
 
 
 class CheckRegistryTests(unittest.TestCase):
     # The order the CLI instantiates checks in is observable: it decides the
     # order findings are printed and written to a report.
     EXPECTED_ORDER = [
+        "Response Header Posture",
         "Host Header Injection",
         "Host Header Bypass",
         "Web Cache Poisoning",
@@ -34,11 +35,13 @@ class CheckRegistryTests(unittest.TestCase):
         for check in CHECKS:
             self.assertTrue(issubclass(check, hhs.BaseTest), check.__name__)
 
-    def test_every_check_has_a_severity(self):
-        # A check whose type is missing from the severity map would silently
-        # report as the default band instead of its intended one.
-        for check in CHECKS:
-            self.assertIn(check.test_type, hhs.SEVERITY_BY_TEST, check.__name__)
+    def test_every_emitted_type_has_a_severity(self):
+        # A finding type missing from the severity map would silently report as
+        # the default band instead of its intended one. Checked against every
+        # type the scanner can emit, not just each check's own name - a check
+        # may report several distinct issues.
+        for test_type in finding_types():
+            self.assertIn(test_type, hhs.SEVERITY_BY_TEST, test_type)
 
 
 class PublicSurfaceTests(unittest.TestCase):

@@ -12,6 +12,15 @@ SEVERITY_BY_TEST = {
     "URL Parameter SSRF": "High",
     "Open Redirect": "Medium",
     "Blind SSRF (OOB)": "High",
+    # Response-header posture: a control that is absent, not a proven exploit.
+    "Strict-Transport-Security": "Medium",
+    "Content-Security-Policy": "Medium",
+    "Frame Protection": "Medium",
+    "X-Content-Type-Options": "Low",
+    "Referrer-Policy": "Low",
+    "Cross-Origin-Opener-Policy": "Low",
+    "Permissions-Policy": "Low",
+    "Version Disclosure": "Low",
 }
 DEFAULT_SEVERITY = "Medium"
 

@@ -22,6 +22,17 @@ CONTROLS_BY_TEST = {
     "URL Parameter SSRF": ("ASVS-5.0:13.2.4", "ASVS-5.0:13.2.5"),
     "Blind SSRF (OOB)": ("ASVS-5.0:13.2.4", "ASVS-5.0:13.2.5"),
     "Open Redirect": ("ASVS-5.0:3.7.2",),
+    # Response-header posture.
+    "Strict-Transport-Security": ("ASVS-5.0:3.4.1",),
+    "Content-Security-Policy": ("ASVS-5.0:3.4.3",),
+    "X-Content-Type-Options": ("ASVS-5.0:3.4.4",),
+    "Referrer-Policy": ("ASVS-5.0:3.4.5",),
+    "Frame Protection": ("ASVS-5.0:3.4.6",),
+    "Cross-Origin-Opener-Policy": ("ASVS-5.0:3.4.8",),
+    "Version Disclosure": ("ASVS-5.0:13.4.6",),
+    # ASVS 5.0 has no Permissions-Policy requirement, so this stays unmapped
+    # rather than borrowing a neighbouring one.
+    "Permissions-Policy": (),
 }
 
 # A mapping that points at an id no longer in the catalogue would render as a

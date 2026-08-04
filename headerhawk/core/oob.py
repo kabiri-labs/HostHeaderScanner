@@ -7,7 +7,11 @@ import requests
 from colorama import Fore, Style
 
 from ..compliance import controls_for
+from .findings import CLASS_VULNERABILITY
 from .severity import severity_for
+
+OOB_TEST_TYPE = "Blind SSRF (OOB)"
+
 
 class OOBManager:
     """Out-of-band interaction manager.
@@ -66,10 +70,11 @@ def confirm_oob_interactions(oob_manager, session, timeout, tests):
     for label in hits:
         owner = by_type.get(label_to_type.get(label, ""), tests[0])
         owner.vulnerabilities_found.append({
-            "test_type": "Blind SSRF (OOB)",
+            "test_type": OOB_TEST_TYPE,
             "test_result": "Vulnerable",
-            "severity": severity_for("Blind SSRF (OOB)"),
-            "controls": list(controls_for("Blind SSRF (OOB)")),
+            "severity": severity_for(OOB_TEST_TYPE),
+            "controls": list(controls_for(OOB_TEST_TYPE)),
+            "finding_class": CLASS_VULNERABILITY,
             "url": owner.target_url,
             "method": "GET",
             "header_name": label,

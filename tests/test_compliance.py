@@ -12,7 +12,7 @@ import tempfile
 import unittest
 
 import headerhawk as hhs
-from headerhawk.checks.registry import CHECKS
+from headerhawk.checks.registry import finding_types
 from headerhawk.compliance import catalogue, mapping
 
 
@@ -61,16 +61,17 @@ class MappingTests(unittest.TestCase):
                 self.assertIn(control_id, catalogue.CONTROLS,
                               f"{test_type} -> {control_id}")
 
-    def test_every_check_type_is_considered(self):
-        # A new check must be given a mapping decision, even if that decision is
-        # "no control applies" - it may not be forgotten about.
-        for check in CHECKS:
-            self.assertIn(check.test_type, mapping.CONTROLS_BY_TEST,
-                          check.__name__)
+    def test_every_emitted_type_is_considered(self):
+        # Every finding type the scanner can emit - including the ones the OOB
+        # path appends and the several a single check may report - must have a
+        # mapping decision on record, even when that decision is "none applies".
+        for test_type in finding_types():
+            self.assertIn(test_type, mapping.CONTROLS_BY_TEST, test_type)
 
-    def test_oob_finding_type_is_mapped(self):
-        # Blind SSRF findings are appended by the OOB path, not by a check.
-        self.assertIn("Blind SSRF (OOB)", mapping.CONTROLS_BY_TEST)
+    def test_unmapped_decision_is_recorded_not_missing(self):
+        # Permissions-Policy has no ASVS 5.0 requirement; the empty tuple is the
+        # decision, and it must not quietly become a missing key.
+        self.assertEqual(mapping.CONTROLS_BY_TEST["Permissions-Policy"], ())
 
     def test_unmapped_type_returns_empty(self):
         self.assertEqual(hhs.controls_for("Nonexistent Finding"), ())

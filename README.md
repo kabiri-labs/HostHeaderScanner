@@ -1,11 +1,11 @@
-# HeaderHawk v2.1.0
+# HeaderHawk v2.2.0
 
-[![Version](https://img.shields.io/badge/version-2.1.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.2.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
-**HeaderHawk** is a security scanner for **HTTP header–based vulnerabilities**. Modern stacks trust a whole family of request headers for routing, identity and caching — `Host`, the `X-Forwarded-*` headers, `Forwarded`, client-IP headers, URL-override headers and more — and each of them is an attack surface. HeaderHawk exercises that surface systematically and reports the bugs it uncovers: Host header injection, SSRF, confirmed web cache poisoning, access-control bypass, open redirects and hidden virtual hosts.
+**HeaderHawk** is a security scanner for **HTTP header–based vulnerabilities**, covering both sides of the exchange: the request headers an attacker manipulates, and the response headers a product is supposed to send. Modern stacks trust a whole family of request headers for routing, identity and caching — `Host`, the `X-Forwarded-*` headers, `Forwarded`, client-IP headers, URL-override headers and more — and each of them is an attack surface. HeaderHawk exercises that surface systematically and reports the bugs it uncovers: Host header injection, SSRF, confirmed web cache poisoning, access-control bypass, open redirects and hidden virtual hosts.
 
 Its focus is **signal over noise**. Findings are driven by evidence — unique per-scan markers, two-probe confirmation, real out-of-band correlation and stable-baseline differencing — so results are trustworthy enough to act on. And the output is built for real workflows: every finding carries a severity, reports export to JSON / Markdown / **SARIF 2.1.0**, and the process exit code lets a CI pipeline gate on the result.
 
@@ -45,6 +45,7 @@ Each module targets a distinct class of header-driven weakness and the headers/v
 | **Open redirect** | `Host`-driven redirects whose `Location` host matches the injected value |
 | **URL-parameter SSRF** | `url`, `next`, `redirect`, `dest`, `uri`, `path`, … against internal targets, with baseline differencing |
 | **Virtual host discovery** | `Host`-header brute force (built-in or custom wordlist) with two-probe confirmation |
+| **Response header posture** | `Strict-Transport-Security`, `Content-Security-Policy` (`object-src` / `base-uri`), `frame-ancestors` / `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy`, and version banners (`Server`, `X-Powered-By`, …) |
 
 ---
 
@@ -60,6 +61,7 @@ a report answers *which requirement does this fail?* without a manual crosswalk.
 | SSRF, URL-parameter SSRF, blind SSRF | ASVS 5.0 **13.2.4**, **13.2.5** — allowlist of systems the application and server may call |
 | Open redirect | ASVS 5.0 **3.7.2** — redirects to another hostname only to allowlisted destinations |
 | Virtual host discovery | ASVS 5.0 **13.4.5** — internal documentation and monitoring endpoints not exposed |
+| Response header posture | ASVS 5.0 **3.4.1** (HSTS), **3.4.3** (CSP), **3.4.4** (nosniff), **3.4.5** (Referrer-Policy), **3.4.6** (frame-ancestors), **3.4.8** (COOP), **13.4.6** (version disclosure) |
 
 The mapping surfaces in every format: a **Control Coverage** table and a per-finding
 `Controls` line in Markdown, a `controls` field in JSON, and SARIF rule `tags` plus
@@ -68,13 +70,17 @@ The mapping surfaces in every format: a **Control Coverage** table and a per-fin
 Control ids are transcribed from the published standard and each links to the
 chapter it came from. A finding type with no genuinely matching control is
 reported as unmapped rather than attached to an approximate requirement — an id
-that does not hold up under review is worse than an empty column.
+that does not hold up under review is worse than an empty column. `Permissions-Policy`
+is the current example: ASVS 5.0 has no requirement for it, so it is reported
+without one.
 
 ---
 
 ## Features
 
 ### Detection & accuracy
+
+- **Response header posture**: one request establishes which browser security controls the response actually carries — HSTS (including `max-age` and `includeSubDomains`), CSP (`object-src` / `base-uri`, with `default-src` fallback handled correctly), frame protection, `nosniff`, `Referrer-Policy`, COOP, `Permissions-Policy` and version banners. Rules stay quiet when the control is genuinely in place, and HSTS is not reported over plaintext where a browser would ignore it anyway.
 
 - **Unique-marker reflection**: injects a random per-request marker so a reflected Host is a high-confidence finding, not a guess — across `Host`, `X-Forwarded-Host`, `Forwarded` and 15+ other headers, checked in the body, the `Location` header and every response header.
 - **Raw HTTP/1.1 client**: a purpose-built client (not `requests`) sends malformed requests verbatim — duplicate `Host` headers, absolute-URI request lines, line-folded headers — the building blocks of most Host validation bypasses.
@@ -88,6 +94,7 @@ that does not hold up under review is worse than an empty column.
 - **Control-mapped findings**: each finding cites the OWASP ASVS 5.0 requirements it is evidence against, in every report format — see [Control Mapping](#control-mapping).
 - **Severity-rated findings**: every finding carries a severity band (High / Medium / Low), shown in the summary and in every report format for quick triage.
 - **Reports in JSON, Markdown or SARIF 2.1.0**: chosen by output extension. SARIF includes per-rule `security-severity` scores and stable fingerprints, dropping straight into GitHub code scanning or a security dashboard.
+- **Findings split by class**: proven *vulnerabilities* and missing *posture* controls are counted separately, and `--fail-on` decides which of them gate the exit code — so posture reporting can be switched on without turning an existing pipeline red.
 - **CI-friendly exit codes**: `0` = clean, `1` = findings, `2` = the scan could not run (bad input, interrupted, or the target was unreachable) — an unreachable host is never mistaken for a clean result.
 - **Batch scanning**: `--list` scans a whole file of URLs in one run, aggregating findings into a single report, summary and exit code.
 - **Copy-paste reproduction**: each finding ships a ready-to-run command — `curl` for header/parameter issues, a `printf | ncat` / `openssl s_client` wire-level command for raw bypasses.
@@ -154,6 +161,7 @@ python headerhawk.py http://example.com
 - `--proxy <url>`: Route traffic through an upstream proxy (e.g. `http://127.0.0.1:8080`), including the raw-HTTP bypass tests, which are tunnelled via `CONNECT`. Supports optional `user:pass@` basic auth.
 - `--insecure` or `-k`: Disable TLS certificate verification.
 - `--verbose <level>`: Verbosity level (1 or 2). Level 2 also records non-findings for the report.
+- `--fail-on <vuln|posture|any|none>`: Which findings make the process exit `1`. Default `vuln` — only proven vulnerabilities. `posture` counts missing response-header controls, `any` counts both, `none` never fails on findings (report-only runs).
 - `--quiet` or `-q`: Suppress progress bars, colours and status chatter (only findings and the final summary are printed). Auto-enabled when stdout is not a TTY, so piped/CI logs stay clean.
 - `--output <file>` or `-o <file>`: Save results to a file. The format is chosen by extension: `.json`, `.sarif` (SARIF 2.1.0 for GitHub code scanning / security dashboards) or `.md`.
 
@@ -164,8 +172,10 @@ The process exit code reflects the scan outcome, so it can gate a CI pipeline:
 | Code | Meaning |
 | ---- | ------- |
 | `0`  | Scan completed and **no** findings were reported. |
-| `1`  | Scan completed and **at least one** finding was reported. |
+| `1`  | Scan completed and **at least one** gating finding was reported (see `--fail-on`). |
 | `2`  | The scan could not run meaningfully — invalid URL, interrupted, or the target was unreachable (every request failed). |
+
+By default only vulnerability-class findings gate the build, so enabling the posture check does not change the exit code of an existing pipeline. Use `--fail-on any` to gate on posture too, or `--fail-on none` for a report-only run.
 
 An unreachable target is deliberately reported as code `2` (inconclusive), never as a clean `0`, so a host that never answered is not mistaken for a host with no vulnerabilities. The summary also prints a `Requests: <ok>/<total> succeeded` line so partial failures are visible.
 
@@ -259,7 +269,7 @@ A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are alwa
 ### Sample Output
 
 ```
-HeaderHawk 2.1.0
+HeaderHawk 2.2.0
 GitHub: https://github.com/kabiri-labs/HeaderHawk
 
 Targets: 1
@@ -314,6 +324,7 @@ headerhawk/
 ├── compliance/            # control catalogue and finding -> control mapping
 ├── core/                  # engine: session, pacing, stats, severity, OOB, output
 ├── net/raw.py             # raw HTTP/1.1 client for wire-level checks
+├── posture/               # response-side assessment: rules + the check
 ├── checks/                # one module per class of weakness
 │   ├── base.py            # shared scaffolding (requests, thread pool, findings)
 │   ├── wordlists.py       # header and virtual-host name lists

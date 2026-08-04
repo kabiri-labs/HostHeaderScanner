@@ -9,12 +9,14 @@ from colorama import Fore, Style, init
 from ._meta import __github_url__, __tool_name__, __version__
 from .checks.registry import CHECKS
 from .core.exitcodes import EXIT_ERROR, determine_exit_code
+from .core.findings import DEFAULT_FAIL_ON, FAIL_ON_CLASSES, gated_finding_count
 from .core.oob import OOBManager, confirm_oob_interactions
 from .core.output import is_quiet, print_summary, resolve_quiet, set_quiet, status
 from .core.ratelimit import RateLimiter
 from .core.session import build_session
 from .core.stats import RequestStats
 from .report.writer import save_results
+
 
 def parse_headers(raw_headers):
     headers = {}
@@ -58,6 +60,12 @@ def parse_arguments():
     parser.add_argument("--quiet", "-q", action="store_true",
                         help="Suppress progress bars and status output "
                              "(auto-enabled when stdout is not a TTY)")
+    parser.add_argument("--fail-on", dest="fail_on",
+                        choices=sorted(FAIL_ON_CLASSES), default=DEFAULT_FAIL_ON,
+                        help="Which findings make the process exit 1: "
+                             "'vuln' (default) counts proven vulnerabilities, "
+                             "'posture' counts missing response-header controls, "
+                             "'any' counts both, 'none' never fails on findings")
     parser.add_argument("--output", "-o",
                         help="Output file (.json, .sarif or .md)")
     args = parser.parse_args()
@@ -68,6 +76,7 @@ def parse_arguments():
     if not args.url and not args.list:
         parser.error("Provide a target URL or --list <file>.")
     return args
+
 
 def load_wordlist(path):
     if not path:
@@ -80,6 +89,7 @@ def load_wordlist(path):
         print(Fore.YELLOW + f"Could not read wordlist '{path}': {exc}. "
               "Using built-in list.")
         return None
+
 
 def load_targets(args):
     """Resolve the target URLs from --list (a file) or the positional argument."""
@@ -173,5 +183,7 @@ def main():
         return EXIT_ERROR
 
     save_results(args.output, all_tests, args.verbose)
-    total_vulns = print_summary(all_tests, targets, stats)
-    return determine_exit_code(total_vulns, stats)
+    print_summary(all_tests, targets, stats)
+    # The exit code gates on the classes the caller asked for, so adding posture
+    # checks does not turn an existing pipeline red on its own.
+    return determine_exit_code(gated_finding_count(all_tests, args.fail_on), stats)
