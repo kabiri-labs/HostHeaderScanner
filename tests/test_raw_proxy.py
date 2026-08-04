@@ -5,6 +5,7 @@ import unittest
 from unittest import mock
 
 import headerhawk as hhs
+from headerhawk.net import raw as hh_raw
 from tests.helpers import FakeSession
 
 
@@ -72,7 +73,7 @@ class OpenSocketTests(unittest.TestCase):
     def test_direct_connection_without_proxy(self):
         client = hhs.RawHTTPClient(timeout=2)
         sentinel = FakeSocket()
-        with mock.patch.object(hhs.socket, "create_connection",
+        with mock.patch.object(hh_raw.socket, "create_connection",
                                return_value=sentinel) as conn:
             result = client._open_socket("target.com", 80)
         self.assertIs(result, sentinel)
@@ -81,7 +82,7 @@ class OpenSocketTests(unittest.TestCase):
     def test_proxy_connection_targets_proxy(self):
         client = hhs.RawHTTPClient(timeout=2, proxy="http://127.0.0.1:8080")
         sock = FakeSocket([b"HTTP/1.1 200 OK\r\n\r\n"])
-        with mock.patch.object(hhs.socket, "create_connection",
+        with mock.patch.object(hh_raw.socket, "create_connection",
                                return_value=sock) as conn:
             result = client._open_socket("target.com", 443)
         self.assertIs(result, sock)
@@ -91,7 +92,7 @@ class OpenSocketTests(unittest.TestCase):
     def test_proxy_connect_failure_returns_none_and_closes(self):
         client = hhs.RawHTTPClient(timeout=2, proxy="127.0.0.1:8080")
         sock = FakeSocket([b"HTTP/1.1 502 Bad Gateway\r\n\r\n"])
-        with mock.patch.object(hhs.socket, "create_connection", return_value=sock):
+        with mock.patch.object(hh_raw.socket, "create_connection", return_value=sock):
             self.assertIsNone(client._open_socket("target.com", 443))
         self.assertTrue(sock.closed)
 
@@ -104,7 +105,7 @@ class SendThroughProxyTests(unittest.TestCase):
             b"HTTP/1.1 200 OK\r\nX-Test: yes\r\n\r\nbody",     # tunnelled response
             b"",
         ])
-        with mock.patch.object(hhs.socket, "create_connection", return_value=sock):
+        with mock.patch.object(hh_raw.socket, "create_connection", return_value=sock):
             response = client.send("http", "target.com", 80,
                                    "GET / HTTP/1.1",
                                    ["Host: target.com", "Connection: close"])
@@ -122,7 +123,7 @@ class SendThroughProxyTests(unittest.TestCase):
             b"HTTP/1.1 200 OK\r\n\r\n",
             b"",
         ])
-        with mock.patch.object(hhs.socket, "create_connection", return_value=sock):
+        with mock.patch.object(hh_raw.socket, "create_connection", return_value=sock):
             client.send("http", "target.com", 80, "GET / HTTP/1.1",
                         ["Host: target.com"])
         token = base64.b64encode(b"user:pass").decode("ascii")

@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 
 import headerhawk as hhs
+from headerhawk.report import sarif as hh_sarif
 from tests.helpers import FakeSession
 
 
@@ -57,11 +58,11 @@ class SeverityTests(unittest.TestCase):
 
 class RuleIdTests(unittest.TestCase):
     def test_slugifies(self):
-        self.assertEqual(hhs._rule_id("Host Header Injection"), "host-header-injection")
-        self.assertEqual(hhs._rule_id("Blind SSRF (OOB)"), "blind-ssrf-oob")
+        self.assertEqual(hh_sarif._rule_id("Host Header Injection"), "host-header-injection")
+        self.assertEqual(hh_sarif._rule_id("Blind SSRF (OOB)"), "blind-ssrf-oob")
 
     def test_empty_falls_back(self):
-        self.assertEqual(hhs._rule_id("!!!"), "finding")
+        self.assertEqual(hh_sarif._rule_id("!!!"), "finding")
 
 
 class BuildSarifTests(unittest.TestCase):

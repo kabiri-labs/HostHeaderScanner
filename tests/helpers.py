@@ -5,9 +5,6 @@ requests are made. The doubles only expose the small surface the code under
 test actually touches.
 """
 
-from datetime import timedelta
-
-
 class FakeElapsed:
     """Stand-in for ``response.elapsed`` exposing ``total_seconds()``."""
 
