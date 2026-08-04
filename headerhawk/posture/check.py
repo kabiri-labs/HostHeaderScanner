@@ -6,10 +6,9 @@ findings are posture-class, so they do not fail a build unless ``--fail-on``
 asks them to.
 """
 
-from urllib.parse import urlparse
-
 from ..checks.base import BaseTest
 from ..core.findings import CLASS_POSTURE
+from .facts import ResponseFacts
 from .rules import RULES
 
 
@@ -34,24 +33,18 @@ class ResponseHeaderPostureTest(BaseTest):
         response = self.request("GET")
         if response is None:
             return
-        assessed_url = getattr(response, "url", None) or self.target_url
-        scheme = (urlparse(assessed_url).scheme or "").lower()
-        headers = {name.lower(): value
-                   for name, value in dict(response.headers).items()}
+        facts = ResponseFacts.from_response(response, self.target_url)
 
         for rule in RULES:
-            outcome = rule.assess(headers, scheme)
-            if outcome is None:
-                continue
-            test_result, analysis = outcome
-            self.record({
-                "test_type": rule.test_type,
-                "test_result": test_result,
-                "severity": rule.severity,
-                "url": assessed_url,
-                "method": "GET",
-                "header_name": rule.test_type,
-                "payload": "",
-                "status_code": response.status_code,
-                "analysis": analysis,
-            })
+            for issue in rule.assess(facts):
+                self.record({
+                    "test_type": rule.test_type,
+                    "test_result": issue.test_result,
+                    "severity": rule.severity,
+                    "url": facts.url,
+                    "method": "GET",
+                    "header_name": issue.subject,
+                    "payload": "",
+                    "status_code": facts.status_code,
+                    "analysis": issue.analysis,
+                })

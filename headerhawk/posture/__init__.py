@@ -1,6 +1,10 @@
 """Response-side assessment: the security controls a response should carry."""
 
 from .check import ResponseHeaderPostureTest
-from .rules import RULES, PostureRule
+from .cookies import Cookie, parse_set_cookie, set_cookie_values
+from .facts import ResponseFacts
+from .model import Issue, PostureRule
+from .rules import RULES
 
-__all__ = ["RULES", "PostureRule", "ResponseHeaderPostureTest"]
+__all__ = ["Cookie", "Issue", "PostureRule", "RULES", "ResponseFacts",
+           "ResponseHeaderPostureTest", "parse_set_cookie", "set_cookie_values"]

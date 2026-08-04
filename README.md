@@ -1,6 +1,6 @@
-# HeaderHawk v2.2.0
+# HeaderHawk v2.3.0
 
-[![Version](https://img.shields.io/badge/version-2.2.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.3.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
@@ -45,7 +45,9 @@ Each module targets a distinct class of header-driven weakness and the headers/v
 | **Open redirect** | `Host`-driven redirects whose `Location` host matches the injected value |
 | **URL-parameter SSRF** | `url`, `next`, `redirect`, `dest`, `uri`, `path`, … against internal targets, with baseline differencing |
 | **Virtual host discovery** | `Host`-header brute force (built-in or custom wordlist) with two-probe confirmation |
-| **Response header posture** | `Strict-Transport-Security`, `Content-Security-Policy` (`object-src` / `base-uri`), `frame-ancestors` / `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy`, and version banners (`Server`, `X-Powered-By`, …) |
+| **Response header posture** | `Strict-Transport-Security`, `frame-ancestors` / `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy`, and version banners (`Server`, `X-Powered-By`, …) |
+| **Content-Security-Policy analysis** | `object-src` / `base-uri`, effective `script-src` (`'unsafe-inline'`, `'unsafe-eval'`, broad sources — with nonce, hash and `'strict-dynamic'` semantics applied), and violation reporting |
+| **Cookie attributes** | `Secure`, `HttpOnly` (on session-like cookies), `SameSite`, `__Secure-` / `__Host-` name prefixes and the 4096-byte size limit, per `Set-Cookie` field |
 
 ---
 
@@ -61,7 +63,8 @@ a report answers *which requirement does this fail?* without a manual crosswalk.
 | SSRF, URL-parameter SSRF, blind SSRF | ASVS 5.0 **13.2.4**, **13.2.5** — allowlist of systems the application and server may call |
 | Open redirect | ASVS 5.0 **3.7.2** — redirects to another hostname only to allowlisted destinations |
 | Virtual host discovery | ASVS 5.0 **13.4.5** — internal documentation and monitoring endpoints not exposed |
-| Response header posture | ASVS 5.0 **3.4.1** (HSTS), **3.4.3** (CSP), **3.4.4** (nosniff), **3.4.5** (Referrer-Policy), **3.4.6** (frame-ancestors), **3.4.8** (COOP), **13.4.6** (version disclosure) |
+| Response header posture | ASVS 5.0 **3.4.1** (HSTS), **3.4.3** (CSP), **3.4.4** (nosniff), **3.4.5** (Referrer-Policy), **3.4.6** (frame-ancestors), **3.4.7** (CSP reporting), **3.4.8** (COOP), **13.4.6** (version disclosure) |
+| Cookie attributes | ASVS 5.0 **3.3.1** (Secure + name prefix), **3.3.2** (SameSite), **3.3.3** (`__Host-` prefix), **3.3.4** (HttpOnly on session values), **3.3.5** (size limit) |
 
 The mapping surfaces in every format: a **Control Coverage** table and a per-finding
 `Controls` line in Markdown, a `controls` field in JSON, and SARIF rule `tags` plus
@@ -80,7 +83,9 @@ without one.
 
 ### Detection & accuracy
 
-- **Response header posture**: one request establishes which browser security controls the response actually carries — HSTS (including `max-age` and `includeSubDomains`), CSP (`object-src` / `base-uri`, with `default-src` fallback handled correctly), frame protection, `nosniff`, `Referrer-Policy`, COOP, `Permissions-Policy` and version banners. Rules stay quiet when the control is genuinely in place, and HSTS is not reported over plaintext where a browser would ignore it anyway.
+- **Response header posture**: one request establishes which browser security controls the response actually carries — HSTS (including `max-age` and `includeSubDomains`), CSP, frame protection, `nosniff`, `Referrer-Policy`, COOP, `Permissions-Policy` and version banners. Rules stay quiet when the control is genuinely in place, and HSTS is not reported over plaintext where a browser would ignore it anyway.
+- **CSP analysed the way a browser reads it**, not by presence alone: `'unsafe-inline'` is *not* reported when a nonce or hash is also present, because a browser ignores it there; `'strict-dynamic'` suppresses host and scheme allowlist findings for the same reason; `object-src` accepts a `default-src` fallback while `base-uri`, which has none, must be explicit; and `*.example.com` is treated as an allowlist rather than an open door.
+- **Per-cookie assessment**: every `Set-Cookie` field is parsed individually — including several folded into one header, without tearing apart the comma inside an `Expires` date — and checked for `Secure`, `SameSite`, name prefixes and size. `HttpOnly` is reported only for cookies whose name suggests a session or sensitive value (`sessionid`, `PHPSESSID`, `authtoken`, …), since an analytics cookie legitimately needs script access.
 
 - **Unique-marker reflection**: injects a random per-request marker so a reflected Host is a high-confidence finding, not a guess — across `Host`, `X-Forwarded-Host`, `Forwarded` and 15+ other headers, checked in the body, the `Location` header and every response header.
 - **Raw HTTP/1.1 client**: a purpose-built client (not `requests`) sends malformed requests verbatim — duplicate `Host` headers, absolute-URI request lines, line-folded headers — the building blocks of most Host validation bypasses.
@@ -269,7 +274,7 @@ A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are alwa
 ### Sample Output
 
 ```
-HeaderHawk 2.2.0
+HeaderHawk 2.3.0
 GitHub: https://github.com/kabiri-labs/HeaderHawk
 
 Targets: 1
@@ -324,7 +329,10 @@ headerhawk/
 ├── compliance/            # control catalogue and finding -> control mapping
 ├── core/                  # engine: session, pacing, stats, severity, OOB, output
 ├── net/raw.py             # raw HTTP/1.1 client for wire-level checks
-├── posture/               # response-side assessment: rules + the check
+├── posture/               # response-side assessment
+│   ├── facts.py           # the response view a rule is given
+│   ├── rules.py           # header and CSP rules
+│   └── cookies.py         # Set-Cookie parsing and cookie rules
 ├── checks/                # one module per class of weakness
 │   ├── base.py            # shared scaffolding (requests, thread pool, findings)
 │   ├── wordlists.py       # header and virtual-host name lists
