@@ -55,6 +55,11 @@ _ENTRIES = [
         "with a maximum age of at least one year.",
         _V3),
     Control(
+        "ASVS-5.0:3.4.2", ASVS, "3.4.2",
+        "The CORS Access-Control-Allow-Origin header field is a fixed value or "
+        "validated against an allowlist of trusted origins.",
+        _V3),
+    Control(
         "ASVS-5.0:3.4.3", ASVS, "3.4.3",
         "A Content-Security-Policy response header field is set, including the "
         "directives object-src 'none' and base-uri 'none'.",

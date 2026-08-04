@@ -12,6 +12,13 @@ SEVERITY_BY_TEST = {
     "URL Parameter SSRF": "High",
     "Open Redirect": "Medium",
     "Blind SSRF (OOB)": "High",
+    # CORS. A permissive allowlist is downgraded per finding when the endpoint
+    # does not allow credentials.
+    "CORS Origin Reflection": "High",
+    "CORS Null Origin": "High",
+    "CORS Origin Validation Bypass": "High",
+    "CORS Insecure Origin Trust": "High",
+    "CORS Wildcard With Credentials": "Low",
     # Response-header posture: a control that is absent, not a proven exploit.
     "Strict-Transport-Security": "Medium",
     "Content-Security-Policy": "Medium",

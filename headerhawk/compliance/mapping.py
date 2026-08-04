@@ -22,6 +22,12 @@ CONTROLS_BY_TEST = {
     "URL Parameter SSRF": ("ASVS-5.0:13.2.4", "ASVS-5.0:13.2.5"),
     "Blind SSRF (OOB)": ("ASVS-5.0:13.2.4", "ASVS-5.0:13.2.5"),
     "Open Redirect": ("ASVS-5.0:3.7.2",),
+    # CORS.
+    "CORS Origin Reflection": ("ASVS-5.0:3.4.2",),
+    "CORS Null Origin": ("ASVS-5.0:3.4.2",),
+    "CORS Origin Validation Bypass": ("ASVS-5.0:3.4.2",),
+    "CORS Insecure Origin Trust": ("ASVS-5.0:3.4.2",),
+    "CORS Wildcard With Credentials": ("ASVS-5.0:3.4.2",),
     # Response-header posture.
     "Strict-Transport-Security": ("ASVS-5.0:3.4.1",),
     "Content-Security-Policy": ("ASVS-5.0:3.4.3",),
