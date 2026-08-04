@@ -8,6 +8,7 @@ from ..core.oob import OOB_TEST_TYPE
 from ..posture import ResponseHeaderPostureTest
 from .auth_bypass import AuthBypassTest
 from .cache_poisoning import CachePoisoningTest
+from .cors import CORSTest
 from .host_bypass import HostBypassTest
 from .host_injection import HostInjectionTest
 from .open_redirect import OpenRedirectTest
@@ -22,6 +23,7 @@ CHECKS = [
     HostInjectionTest,
     HostBypassTest,
     CachePoisoningTest,
+    CORSTest,
     AuthBypassTest,
     VhostDiscoveryTest,
     SSRFTest,
