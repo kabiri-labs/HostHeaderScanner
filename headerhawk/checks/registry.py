@@ -12,6 +12,7 @@ from .cors import CORSTest
 from .host_bypass import HostBypassTest
 from .host_injection import HostInjectionTest
 from .open_redirect import OpenRedirectTest
+from .smuggling import RequestSmugglingTest
 from .ssrf import SSRFTest
 from .url_param import URLParameterTest
 from .vhost import VhostDiscoveryTest
@@ -29,6 +30,9 @@ CHECKS = [
     SSRFTest,
     URLParameterTest,
     OpenRedirectTest,
+    # Last on purpose: it is the most disruptive check, so everything
+    # else has already completed by the time it runs.
+    RequestSmugglingTest,
 ]
 
 

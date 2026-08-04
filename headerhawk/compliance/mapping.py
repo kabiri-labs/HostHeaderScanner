@@ -22,6 +22,8 @@ CONTROLS_BY_TEST = {
     "URL Parameter SSRF": ("ASVS-5.0:13.2.4", "ASVS-5.0:13.2.5"),
     "Blind SSRF (OOB)": ("ASVS-5.0:13.2.4", "ASVS-5.0:13.2.5"),
     "Open Redirect": ("ASVS-5.0:3.7.2",),
+    "HTTP Request Smuggling (CL.TE)": ("ASVS-5.0:4.2.1", "ASVS-5.0:4.2.2"),
+    "HTTP Request Smuggling (TE.CL)": ("ASVS-5.0:4.2.1", "ASVS-5.0:4.2.2"),
     # CORS.
     "CORS Origin Reflection": ("ASVS-5.0:3.4.2",),
     "CORS Null Origin": ("ASVS-5.0:3.4.2",),

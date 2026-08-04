@@ -2,18 +2,19 @@
 
 from urllib.parse import urlparse
 
+
 def _shell_quote(value):
     return "'" + str(value).replace("'", "'\\''") + "'"
 
 
 def build_reproduction(entry, target_url, insecure):
     """Build a copy-pasteable command that reproduces a finding."""
-    test_type = entry.get("test_type", "")
     method = entry.get("method", "GET")
     url = entry.get("url") or target_url
 
-    # Raw-socket bypasses cannot be expressed with curl; emit a wire-level repro.
-    if test_type == "Host Header Bypass" and entry.get("raw_request"):
+    # A request sent over a raw socket cannot be expressed with curl - that is
+    # why it was sent that way - so emit a wire-level repro instead.
+    if entry.get("raw_request"):
         parsed = urlparse(target_url)
         host, port = parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80)
         wire = entry["raw_request"].replace("\r\n", "\\r\\n")

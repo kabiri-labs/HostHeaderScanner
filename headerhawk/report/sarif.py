@@ -82,6 +82,7 @@ def build_sarif(results, version=None):
                 "status_code": result.get("status_code", ""),
                 "controls": list(control_ids),
                 "finding_class": finding_class_of(result),
+                "confirmation": result.get("confirmation", ""),
             },
             "partialFingerprints": {
                 "hostHeaderScanner/v1": _fingerprint(

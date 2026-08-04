@@ -95,6 +95,17 @@ _ENTRIES = [
         "user.",
         _V4),
     Control(
+        "ASVS-5.0:4.2.1", ASVS, "4.2.1",
+        "HTTP message boundaries are determined consistently, so that a "
+        "Transfer-Encoding header field takes precedence over Content-Length "
+        "and requests cannot be smuggled.",
+        _V4),
+    Control(
+        "ASVS-5.0:4.2.2", ASVS, "4.2.2",
+        "Content-Length is consistent with the message body that is generated, "
+        "so that requests cannot be smuggled.",
+        _V4),
+    Control(
         "ASVS-5.0:8.3.1", ASVS, "8.3.1",
         "Authorization rules are enforced at a trusted service layer and do "
         "not rely on controls an untrusted consumer could manipulate.",

@@ -101,6 +101,8 @@ def save_results(output_file, tests, verbose):
                 f"- **Class:** {finding_class_of(result)}",
                 f"- **Controls:** {_controls_line(result)}",
                 f"- **Analysis:** {result['analysis']}",
+                (f"- **Confirming this:** {result['confirmation']}"
+                 if result.get("confirmation") else ""),
                 f"- **Reproduce:** `{result['repro']}`\n" if result.get("repro") else "",
             ])
     else:
