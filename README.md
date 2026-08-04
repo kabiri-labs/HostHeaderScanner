@@ -1,6 +1,6 @@
-# HeaderHawk v2.5.0
+# HeaderHawk v2.5.1
 
-[![Version](https://img.shields.io/badge/version-2.5.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.5.1-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
@@ -171,7 +171,7 @@ python headerhawk.py http://example.com
 - `--methods <list>`: Comma-separated HTTP methods to test (default `GET`, e.g. `GET,POST`).
 - `--header <"Name: Value">` or `-H`: Add a custom request header. Repeatable.
 - `--proxy <url>`: Route traffic through an upstream proxy (e.g. `http://127.0.0.1:8080`), including the raw-HTTP bypass tests, which are tunnelled via `CONNECT`. Supports optional `user:pass@` basic auth.
-- `--insecure` or `-k`: Disable TLS certificate verification.
+- `--insecure` or `-k`: Disable TLS certificate verification — needed for staging and lab hosts with a self-signed certificate. This genuinely disables verification even when the environment sets `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE`, which otherwise override it. Without it, a scan of an untrusted-certificate host fails every request and says so, pointing at this flag.
 - `--verbose <level>`: Verbosity level (1 or 2). Level 2 also records non-findings for the report.
 - `--enable-desync`: Confirm a suspected request-smuggling desync by planting a smuggled prefix and checking whether a following request comes back affected. **Intrusive** — see the warning below. Off by default; without it, smuggling is reported from timing alone.
 - `--fail-on <vuln|posture|any|none>`: Which findings make the process exit `1`. Default `vuln` — only proven vulnerabilities. `posture` counts missing response-header controls, `any` counts both, `none` never fails on findings (report-only runs).
@@ -210,6 +210,8 @@ The process exit code reflects the scan outcome, so it can gate a CI pipeline:
 | `2`  | The scan could not run meaningfully — invalid URL, interrupted, or the target was unreachable (every request failed). |
 
 By default only vulnerability-class findings gate the build, so enabling the posture check does not change the exit code of an existing pipeline. Use `--fail-on any` to gate on posture too, or `--fail-on none` for a report-only run.
+
+If every request failed because the certificate was not trusted, the summary says so explicitly and points at `--insecure` — a self-signed certificate should not look like an unreachable host.
 
 An unreachable target is deliberately reported as code `2` (inconclusive), never as a clean `0`, so a host that never answered is not mistaken for a host with no vulnerabilities. The summary also prints a `Requests: <ok>/<total> succeeded` line so partial failures are visible.
 
@@ -303,7 +305,7 @@ A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are alwa
 ### Sample Output
 
 ```
-HeaderHawk 2.5.0
+HeaderHawk 2.5.1
 GitHub: https://github.com/kabiri-labs/HeaderHawk
 
 Targets: 1
