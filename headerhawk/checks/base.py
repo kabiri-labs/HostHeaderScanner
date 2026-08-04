@@ -69,9 +69,10 @@ class BaseTest:
             if self.stats is not None:
                 self.stats.record(True)
             return response
-        except requests.RequestException:
+        except requests.RequestException as exc:
             if self.stats is not None:
-                self.stats.record(False)
+                self.stats.record(
+                    False, tls_error=isinstance(exc, requests.exceptions.SSLError))
             return None
 
     def run_pool(self, worker, test_cases, description):

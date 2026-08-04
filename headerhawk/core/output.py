@@ -70,6 +70,11 @@ def print_summary(all_tests, targets, stats):
         print(Fore.RED + Style.BRIGHT +
               "\n[!] Every request failed - the target(s) appear unreachable. "
               "Results are inconclusive, not a clean bill of health.")
+        if stats.all_tls_failures:
+            print(Fore.YELLOW +
+                  "    Every failure was a TLS certificate error. If this target "
+                  "uses a self-signed or otherwise untrusted certificate - "
+                  "normal in test environments - re-run with --insecure/-k.")
     elif total_vulns == 0:
         print(Fore.GREEN + "No vulnerabilities were found.")
     print(Fore.CYAN + "=" * 35)

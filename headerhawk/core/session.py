@@ -7,9 +7,31 @@ from urllib3.util.retry import Retry
 
 from .._meta import __tool_name__, __version__
 
+
+class _Session(requests.Session):
+    """A session whose TLS-verification setting cannot be quietly overridden.
+
+    ``requests`` consults ``REQUESTS_CA_BUNDLE`` and ``CURL_CA_BUNDLE`` whenever
+    a request does not name ``verify`` itself, and the CA bundle it finds there
+    wins over ``session.verify``. In an environment that sets either - a CI
+    runner behind a TLS-inspecting proxy, a corporate image - that silently
+    turns ``--insecure`` back off, and a scan of a host with a self-signed
+    certificate fails every request while reporting the target as unreachable.
+
+    Naming ``verify`` explicitly stops the environment being consulted at all.
+    It is only forced when verification is off, so a target that legitimately
+    needs a custom CA bundle from the environment still gets one.
+    """
+
+    def request(self, *args, **kwargs):
+        if self.verify is False:
+            kwargs.setdefault("verify", False)
+        return super().request(*args, **kwargs)
+
+
 def build_session(timeout, threads, insecure, proxy, extra_headers):
     """Create a connection-pooled, retry-aware requests session."""
-    session = requests.Session()
+    session = _Session()
     retry = Retry(
         total=2,
         backoff_factor=0.3,
