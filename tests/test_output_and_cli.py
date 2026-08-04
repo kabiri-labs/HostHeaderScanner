@@ -55,7 +55,7 @@ class SaveResultsTests(unittest.TestCase):
             hhs.save_results(path, tests, verbose=1)
             with open(path) as handle:
                 content = handle.read()
-        self.assertIn("# Host Header Injection Testing Report", content)
+        self.assertIn("# HeaderHawk Report", content)
         self.assertIn("**Total Findings:** 1", content)
         self.assertIn("reflected", content)
 

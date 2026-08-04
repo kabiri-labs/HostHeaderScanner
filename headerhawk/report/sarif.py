@@ -4,7 +4,23 @@ import hashlib
 import re
 
 from .._meta import __github_url__, __tool_name__, __version__
+from ..compliance import controls_for, describe
 from ..core.severity import DEFAULT_SEVERITY, SEVERITY_META, severity_for
+
+
+def _control_help(control_ids):
+    """Render the controls behind a rule as help text, or "" when unmapped."""
+    lines = []
+    for control_id in control_ids:
+        control = describe(control_id)
+        if control:
+            lines.append(f"- {control.framework} {control.section}: "
+                         f"{control.title} ({control.url})")
+        else:
+            lines.append(f"- {control_id}")
+    if not lines:
+        return ""
+    return "Verifies:\n" + "\n".join(lines)
 
 def _rule_id(test_type):
     """Turn a human test-type name into a stable SARIF rule id slug."""
@@ -31,13 +47,24 @@ def build_sarif(results, version=None):
         rule_id = _rule_id(test_type)
         severity = result.get("severity") or severity_for(test_type)
         level, score = SEVERITY_META.get(severity, SEVERITY_META[DEFAULT_SEVERITY])
+        control_ids = result.get("controls")
+        if control_ids is None:
+            control_ids = controls_for(test_type)
         if rule_id not in rules:
-            rules[rule_id] = {
+            # Controls ride on the rule as tags (code-scanning surfaces them as
+            # filterable labels) and in help text, so an alert carries the
+            # requirement it is evidence against without leaving the platform.
+            rule = {
                 "id": rule_id,
                 "name": re.sub(r"\s+", "", test_type) or "Finding",
                 "shortDescription": {"text": test_type},
-                "properties": {"security-severity": score, "tags": ["security"]},
+                "properties": {"security-severity": score,
+                               "tags": ["security"] + list(control_ids)},
             }
+            help_text = _control_help(control_ids)
+            if help_text:
+                rule["help"] = {"text": help_text, "markdown": help_text}
+            rules[rule_id] = rule
         location = result.get("url") or ""
         header_or_param = result.get("header_name") or result.get("param_name") or ""
         entry = {
@@ -51,6 +78,7 @@ def build_sarif(results, version=None):
                 "payload": result.get("payload", ""),
                 "header_or_parameter": header_or_param,
                 "status_code": result.get("status_code", ""),
+                "controls": list(control_ids),
             },
             "partialFingerprints": {
                 "hostHeaderScanner/v1": _fingerprint(

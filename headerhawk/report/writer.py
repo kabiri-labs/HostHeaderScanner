@@ -3,8 +3,47 @@
 import json
 from datetime import datetime
 
+from ..compliance import controls_for, describe, summarise
 from ..core.severity import DEFAULT_SEVERITY, severity_for
 from .sarif import build_sarif
+
+
+def _control_cell(control):
+    """Render a catalogued control as a link, or an unknown id as plain text."""
+    if isinstance(control, str):
+        return control, ""
+    return f"[{control.id}]({control.url})", control.title
+
+
+def _controls_line(result):
+    """Render one finding's controls as links, keeping unknown ids readable."""
+    control_ids = result.get("controls") or ()
+    if not control_ids:
+        return "none catalogued"
+    rendered = []
+    for control_id in control_ids:
+        control = describe(control_id)
+        rendered.append(f"[{control.id}]({control.url})" if control else control_id)
+    return ", ".join(rendered)
+
+
+def _coverage_section(results):
+    """Build the control-coverage table an assessor reads before the details."""
+    rows, unmapped = summarise(results)
+    if not rows and not unmapped:
+        return []
+    lines = ["## Control Coverage\n",
+             "| Control | Requirement | Findings |",
+             "| --- | --- | --- |"]
+    for control, count in rows:
+        cell, title = _control_cell(control)
+        lines.append(f"| {cell} | {title} | {count} |")
+    if unmapped:
+        lines.append("")
+        lines.append(f"_{unmapped} finding(s) map to no catalogued control._")
+    lines.append("")
+    return lines
+
 
 def save_results(output_file, tests, verbose):
     if not output_file or not tests:
@@ -14,9 +53,12 @@ def save_results(output_file, tests, verbose):
     for test in tests:
         results.extend(test.all_results if verbose == 2 else [])
         results.extend(test.vulnerabilities_found)
-    # Ensure every result carries a severity so JSON/SARIF/Markdown agree.
+    # Ensure every result carries a severity and its control mapping so
+    # JSON/SARIF/Markdown agree - verbose-2 entries never went through record().
     for result in results:
-        result.setdefault("severity", severity_for(result.get("test_type", "")))
+        test_type = result.get("test_type", "")
+        result.setdefault("severity", severity_for(test_type))
+        result.setdefault("controls", list(controls_for(test_type)))
 
     if extension == "json":
         with open(output_file, "w") as handle:
@@ -34,11 +76,12 @@ def save_results(output_file, tests, verbose):
     target_line = (targets[0] if len(targets) == 1
                    else f"{len(targets)} targets ({', '.join(targets)})")
     lines = [
-        "# Host Header Injection Testing Report",
+        "# HeaderHawk Report",
         f"**Target(s):** {target_line}",
         f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"**Total Findings:** {sum(len(t.vulnerabilities_found) for t in tests)}\n",
     ]
+    lines.extend(_coverage_section(results))
     if results:
         lines.append("## Test Results\n")
         for result in results:
@@ -53,6 +96,7 @@ def save_results(output_file, tests, verbose):
                 f"- **Payload:** {result.get('payload', '')}",
                 f"- **Status Code:** {result['status_code']}",
                 f"- **Response Time:** {result.get('response_time', 0):.2f} seconds",
+                f"- **Controls:** {_controls_line(result)}",
                 f"- **Analysis:** {result['analysis']}",
                 f"- **Reproduce:** `{result['repro']}`\n" if result.get("repro") else "",
             ])

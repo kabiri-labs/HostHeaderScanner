@@ -23,6 +23,8 @@ from .checks.wordlists import (CACHE_STATUS_HEADERS, DEFAULT_VHOST_WORDLIST,
                                UNKEYED_HOST_HEADERS)
 from .cli import (load_targets, load_wordlist, main, parse_arguments,
                   parse_headers, scan_target)
+from .compliance import (CONTROLS, CONTROLS_BY_TEST, Control, controls_for,
+                         describe, summarise)
 from .core.exitcodes import (EXIT_ERROR, EXIT_FINDINGS, EXIT_OK,
                              determine_exit_code)
 from .core.oob import OOBManager, confirm_oob_interactions
@@ -49,6 +51,8 @@ __all__ = [
     "PATH_OVERRIDE_HEADERS", "UNKEYED_HOST_HEADERS",
     "load_targets", "load_wordlist", "main", "parse_arguments",
     "parse_headers", "scan_target",
+    "CONTROLS", "CONTROLS_BY_TEST", "Control", "controls_for", "describe",
+    "summarise",
     "EXIT_ERROR", "EXIT_FINDINGS", "EXIT_OK", "determine_exit_code",
     "OOBManager", "confirm_oob_interactions",
     "is_quiet", "print_summary", "resolve_quiet", "set_quiet", "status",
