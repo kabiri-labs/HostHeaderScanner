@@ -38,12 +38,16 @@ def is_quiet():
     return _QUIET
 
 
-def print_summary(all_tests, targets, stats, drift=None):
+def print_summary(all_tests, targets, stats, drift=None, scan_mode=None):
     """Print the aggregate summary and return the total finding count."""
     total_vulns = sum(len(test.vulnerabilities_found) for test in all_tests)
     scanned = len({test.target_url for test in all_tests})
     print(Fore.CYAN + Style.BRIGHT + "\n========== Test Summary ==========")
     print(Fore.CYAN + f"Targets scanned: {scanned}/{len(targets)}")
+    if scan_mode:
+        # Never suppressed: whether the scan saw the product or its login
+        # page decides what every other line here means.
+        print(Fore.CYAN + f"Scan mode: {scan_mode}")
     print(Fore.CYAN + f"Requests: {stats.succeeded}/{stats.total} succeeded "
           f"({stats.failed} failed).")
     counts = count_by_class(all_tests)

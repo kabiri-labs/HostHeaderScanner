@@ -5,6 +5,7 @@ import json
 from ..compliance.evidence import (STATUS_NOT_ASSESSED, STATUS_ORDER,
                                    STATUS_PASS, build_evidence,
                                    unmapped_findings)
+from ..core.auth import NOT_CONFIGURED, UNVERIFIED
 
 _STATUS_MARK = {"Fail": "FAIL", "Not assessed": "NOT ASSESSED", "Pass": "PASS"}
 
@@ -35,6 +36,8 @@ def render_markdown(evidence, orphans=()):
         f"- **Generated:** {evidence['generated']}",
         f"- **Target(s):** {', '.join(evidence['targets']) or 'n/a'}",
     ]
+    if evidence.get("scan_mode"):
+        lines.append(f"- **Scan mode:** {evidence['scan_mode']}")
     requests = evidence.get("requests")
     if requests:
         lines.append(f"- **Requests:** {requests['succeeded']}/{requests['total']} "
@@ -43,6 +46,13 @@ def render_markdown(evidence, orphans=()):
               "| Status | Controls |", "| --- | --- |"]
     for status in STATUS_ORDER:
         lines.append(f"| {status} | {evidence['counts'][status]} |")
+
+    if evidence.get("scan_mode") in (UNVERIFIED, NOT_CONFIGURED):
+        lines += ["",
+                  "> This scan was not confirmed to be running as a logged-in "
+                  "user, so these results describe whatever the target serves "
+                  "anonymously. For an authenticated product that is the login "
+                  "page, not the application behind it."]
 
     if evidence["counts"][STATUS_NOT_ASSESSED]:
         lines += ["",
@@ -96,6 +106,7 @@ def render_json(evidence, orphans=()):
         "version": evidence["version"],
         "generated": evidence["generated"],
         "targets": evidence["targets"],
+        "scan_mode": evidence.get("scan_mode"),
         "requests": evidence["requests"],
         "counts": evidence["counts"],
         "controls": [
@@ -120,12 +131,13 @@ def render_json(evidence, orphans=()):
 
 
 def save_evidence(path, tests, targets, stats=None, version=None,
-                  tool_name=None, drift=None):
+                  tool_name=None, drift=None, scan_mode=None):
     """Write the evidence report, choosing the format from the extension."""
     if not path:
         return
     evidence = build_evidence(tests, targets, stats=stats, version=version,
-                              tool_name=tool_name, drift=drift)
+                              tool_name=tool_name, drift=drift,
+                              scan_mode=scan_mode)
     orphans = unmapped_findings(tests)
     if path.rsplit(".", 1)[-1].lower() == "json":
         body = render_json(evidence, orphans)
