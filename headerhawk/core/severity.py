@@ -6,6 +6,7 @@ SEVERITY_BY_TEST = {
     "Host Header Injection": "Medium",
     "Host Header Bypass": "High",
     "Web Cache Poisoning": "High",
+    "Unkeyed Input": "Medium",
     "Auth Bypass": "High",
     "Virtual Host Discovery": "Low",
     "SSRF": "High",

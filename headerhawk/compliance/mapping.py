@@ -13,6 +13,11 @@ CONTROLS_BY_TEST = {
     "Host Header Injection": ("ASVS-5.0:4.1.3",),
     "Host Header Bypass": ("ASVS-5.0:4.1.3",),
     "Web Cache Poisoning": ("ASVS-5.0:4.1.3",),
+    # The candidates are deliberately limited to header fields an
+    # intermediary sets, which is exactly what 4.1.3 covers: finding that
+    # one of them changes the response is finding that the end user can
+    # override it. Fuzzing arbitrary names would not support this claim.
+    "Unkeyed Input": ("ASVS-5.0:4.1.3",),
     # A bypass driven by a client-supplied header is both an override of an
     # intermediary's header and an authorization decision made on data the
     # consumer controls.
