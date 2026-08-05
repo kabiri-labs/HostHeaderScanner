@@ -1,6 +1,6 @@
-# HeaderHawk v2.8.0
+# HeaderHawk v2.9.0
 
-[![Version](https://img.shields.io/badge/version-2.8.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.9.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
@@ -15,6 +15,7 @@ Its focus is **signal over noise**. Findings are driven by evidence — unique p
 
 - [Detection Coverage](#detection-coverage)
 - [Control Mapping](#control-mapping)
+- [Authenticated Scanning](#authenticated-scanning)
 - [Compliance Evidence](#compliance-evidence)
 - [Features](#features)
 - [Installation](#installation)
@@ -84,6 +85,45 @@ reported as unmapped rather than attached to an approximate requirement — an i
 that does not hold up under review is worse than an empty column. `Permissions-Policy`
 is the current example: ASVS 5.0 has no requirement for it, so it is reported
 without one.
+
+---
+
+## Authenticated Scanning
+
+Pointing an unauthenticated scan at an authenticated product is the quietest way
+to get a worthless report. Every request comes back as the login page, so the
+scanner assesses *the login page's* headers and reports them as the product's.
+Nothing errors — the report simply describes the wrong pages.
+
+```bash
+export HH_LOGIN='user=admin&pass=s3cret'
+python headerhawk.py https://app.example.com/dashboard \
+       --auth-login-url https://app.example.com/login \
+       --auth-login-data env:HH_LOGIN \
+       --auth-verify-text 'Sign out'
+```
+
+Credentials can be a cookie (`--auth-cookie 'sid=…'`) or a form login. Either
+can be given as `env:NAME` to keep them out of the command line and out of shell
+history.
+
+### The session is checked, not assumed
+
+- **Before the scan.** If you said what a logged-in page contains and it is not
+  there, the scan **stops** rather than assess the logged-out pages and present
+  them as the product's.
+- **With no expectation given**, the authenticated response is compared with an
+  anonymous one. Credentials that change nothing are not necessarily wrong, but
+  the scan is then not assessing the authenticated surface, and the report says
+  so instead of implying otherwise.
+- **After the scan.** A scan that walks a site can log itself out partway
+  through; if the session was valid at the start and not at the end, the results
+  are reported as inconclusive.
+
+The scan mode — `authenticated`, `authentication unverified` or
+`unauthenticated` — appears in the summary (never suppressed, even with
+`--quiet`) and in the evidence report, because whether the scan saw the product
+or its login page decides what every other line means.
 
 ---
 
@@ -166,6 +206,7 @@ a change is the mechanism working, not the control failing.
 
 ### Engine, workflow & reporting
 
+- **Authenticated scanning that checks itself**: log in by cookie or form, and the session is verified before *and* after the scan — an unauthenticated run is never reported as an authenticated one. See [Authenticated Scanning](#authenticated-scanning).
 - **Evidence report by requirement**: `--evidence` answers *did this product meet each requirement, and how do you know?* — and never reports a requirement as met when the scan could not judge it. See [Compliance Evidence](#compliance-evidence).
 - **Control-mapped findings**: each finding cites the OWASP ASVS 5.0 requirements it is evidence against, in every report format — see [Control Mapping](#control-mapping).
 - **Severity-rated findings**: every finding carries a severity band (High / Medium / Low), shown in the summary and in every report format for quick triage.
@@ -240,6 +281,9 @@ python headerhawk.py http://example.com
 - `--enable-desync`: Confirm a suspected request-smuggling desync by planting a smuggled prefix and checking whether a following request comes back affected. **Intrusive** — see the warning below. Off by default; without it, smuggling is reported from timing alone.
 - `--fail-on <vuln|posture|any|none>`: Which findings make the process exit `1`. Default `vuln` — only proven vulnerabilities. `posture` counts missing response-header controls, `any` counts both, `none` never fails on findings (report-only runs).
 - `--quiet` or `-q`: Suppress progress bars, colours and status chatter (only findings and the final summary are printed). Auto-enabled when stdout is not a TTY, so piped/CI logs stay clean.
+- `--auth-cookie <cookies>`: Scan with these cookies, as `'a=1; b=2'`. Accepts `env:NAME`.
+- `--auth-login-url <url>` / `--auth-login-data <body>` / `--auth-login-method <method>`: Log in by submitting a form before scanning. The body accepts `env:NAME`.
+- `--auth-verify-text <text>` / `--auth-verify-absent <text>`: What a logged-in (or logged-out) page contains. The scan stops rather than report an unauthenticated run as an authenticated one. See [Authenticated Scanning](#authenticated-scanning).
 - `--baseline <file>`: A previous scan's JSON output. Findings are compared against it and reported as new, fixed or unchanged.
 - `--fail-on-new`: Gate the exit code on findings that are **not** in `--baseline`, so a pipeline fails on a regression rather than on findings the team has already accepted. Requires `--baseline`.
 - `--evidence <file>`: Write a per-control compliance evidence report (`.md` or `.json`) — every catalogued requirement reported as Pass, Fail or Not assessed, with its evidence or the reason it could not be judged. See [Compliance Evidence](#compliance-evidence).
@@ -372,7 +416,7 @@ A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are alwa
 ### Sample Output
 
 ```
-HeaderHawk 2.8.0
+HeaderHawk 2.9.0
 GitHub: https://github.com/kabiri-labs/HeaderHawk
 
 Targets: 1

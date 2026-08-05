@@ -46,7 +46,7 @@ DRIFT_CONTROL = "PCI-DSS-4.0.1:11.6.1"
 
 
 def build_evidence(tests, targets, stats=None, version=None, tool_name=None,
-                   drift=None):
+                   drift=None, scan_mode=None):
     """Build the per-control evidence for one scan.
 
     ``tests`` are the check instances that ran, in any order. Every catalogued
@@ -117,6 +117,10 @@ def build_evidence(tests, targets, stats=None, version=None, tool_name=None,
                       "failed": stats.failed} if stats is not None else None),
         "counts": counts,
         "controls": results,
+        # Whether the scan ran as a logged-in user. Controls assessed against
+        # a login page are not evidence about the product behind it, so the
+        # report has to say which it was looking at.
+        "scan_mode": scan_mode,
     }
 
 

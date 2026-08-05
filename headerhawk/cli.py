@@ -8,6 +8,8 @@ from colorama import Fore, Style, init
 
 from ._meta import __github_url__, __tool_name__, __version__
 from .checks.registry import CHECKS
+from .core.auth import (FAILED, NOT_CONFIGURED, AuthConfig,
+                        apply_credentials, is_configured, log_in, verify)
 from .core.baseline import (collect_findings, compare, finding_identity,
                             load_baseline)
 from .core.exitcodes import EXIT_ERROR, determine_exit_code
@@ -71,6 +73,28 @@ def parse_arguments():
                              "prefix can attach to another user's request and "
                              "corrupt or misroute live traffic. Without it, "
                              "smuggling is reported from timing alone")
+    parser.add_argument("--auth-cookie", dest="auth_cookie",
+                        help="Cookies to scan with, as 'a=1; b=2'. Use "
+                             "'env:NAME' to read them from an environment "
+                             "variable instead of the command line")
+    parser.add_argument("--auth-login-url", dest="auth_login_url",
+                        help="Log in by submitting a form to this URL before "
+                             "scanning; the resulting session is used for the "
+                             "whole scan")
+    parser.add_argument("--auth-login-data", dest="auth_login_data",
+                        help="Form body for --auth-login-url, as "
+                             "'user=a&pass=b'. Use 'env:NAME' to keep "
+                             "credentials out of the command line")
+    parser.add_argument("--auth-login-method", dest="auth_login_method",
+                        default="POST",
+                        help="HTTP method for the login request (default POST)")
+    parser.add_argument("--auth-verify-text", dest="auth_verify_text",
+                        help="Text that appears only when logged in. The scan "
+                             "stops rather than report an unauthenticated run "
+                             "as if it were authenticated")
+    parser.add_argument("--auth-verify-absent", dest="auth_verify_absent",
+                        help="Text that appears only when logged out, e.g. "
+                             "'Sign in'. The inverse of --auth-verify-text")
     parser.add_argument("--baseline",
                         help="A previous scan's JSON output. Findings are "
                              "compared against it and reported as new, fixed or "
@@ -158,6 +182,37 @@ def scan_target(url, args, session, methods, wordlist, stats, rate_limiter=None)
     return tests
 
 
+def auth_config(args):
+    """Collect the authentication options into one value, or None."""
+    config = AuthConfig(cookie=args.auth_cookie,
+                        login_url=args.auth_login_url,
+                        login_data=args.auth_login_data,
+                        login_method=args.auth_login_method,
+                        verify_text=args.auth_verify_text,
+                        verify_absent=args.auth_verify_absent)
+    return config if is_configured(config) else None
+
+
+def establish_session(args, session, config, session_factory):
+    """Log in if asked, then report whether the scan is really authenticated.
+
+    Returns the AuthResult. A configured login that demonstrably did not work is
+    fatal: a scan that quietly assessed the login page would produce a report
+    describing the wrong pages, which is worse than no report.
+    """
+    if config is None:
+        return verify(session, args.url or "", None, args.timeout)
+    apply_credentials(session, config)
+    if config.login_url:
+        outcome = log_in(session, config, args.timeout)
+        status(Fore.CYAN + f"Login: {outcome.detail}")
+        if outcome.state == FAILED:
+            return outcome
+    target = args.url or (load_targets(args) or [""])[0]
+    return verify(session, target, config, args.timeout,
+                  session_factory=session_factory)
+
+
 def resolve_drift(args, all_tests):
     """Compare against the baseline, or return None when there is nothing to do.
 
@@ -206,6 +261,21 @@ def main():
         extra_headers=extra_headers,
     )
 
+    config = auth_config(args)
+    auth = establish_session(
+        args, session, config,
+        session_factory=lambda: build_session(
+            timeout=args.timeout, threads=1, insecure=args.insecure,
+            proxy=args.proxy, extra_headers=None))
+    if auth.state != NOT_CONFIGURED:
+        status(Fore.CYAN + f"Scan mode: {auth.state} - {auth.detail}")
+    if auth.state == FAILED:
+        print(Fore.RED + Style.BRIGHT +
+              f"\n[!] Authentication did not take effect: {auth.detail}. "
+              f"Scanning now would assess the logged-out pages and report them "
+              f"as the product's, so the scan has been stopped.")
+        return EXIT_ERROR
+
     stats = RequestStats()
     rate_limiter = RateLimiter(args.rate)
     all_tests = []
@@ -229,11 +299,22 @@ def main():
         print(Fore.RED + "No valid targets were scanned.")
         return EXIT_ERROR
 
+    if config is not None and auth.state != FAILED:
+        recheck = verify(session, targets[0], config, args.timeout)
+        if recheck.state == FAILED:
+            print(Fore.RED + Style.BRIGHT +
+                  f"\n[!] The session was valid at the start but not at the "
+                  f"end ({recheck.detail}). Part of this scan ran logged out, "
+                  f"so its results are inconclusive.")
+            auth = recheck
+
     drift = resolve_drift(args, all_tests)
     save_results(args.output, all_tests, args.verbose)
     save_evidence(args.evidence, all_tests, targets, stats=stats,
-                  version=__version__, tool_name=__tool_name__, drift=drift)
-    print_summary(all_tests, targets, stats, drift=drift)
+                  version=__version__, tool_name=__tool_name__, drift=drift,
+                  scan_mode=auth.state)
+    print_summary(all_tests, targets, stats, drift=drift,
+                  scan_mode=auth.state)
     # The exit code gates on the classes the caller asked for, so adding posture
     # checks does not turn an existing pipeline red on its own.
     gated = gated_finding_count(
