@@ -12,6 +12,7 @@ from .checks.auth_bypass import AuthBypassTest
 from .checks.base import BaseTest
 from .checks.cache_poisoning import CachePoisoningTest
 from .checks.cors import CORSTest
+from .checks.deception import CacheDeceptionTest
 from .checks.crlf import CRLFInjectionTest
 from .checks.host_bypass import HostBypassTest
 from .checks.host_injection import HostInjectionTest
@@ -66,7 +67,7 @@ init(autoreset=True)
 
 __all__ = [
     "__github_url__", "__tool_name__", "__version__",
-    "AuthBypassTest", "BaseTest", "CachePoisoningTest", "CORSTest", "CRLFInjectionTest",
+    "AuthBypassTest", "BaseTest", "CachePoisoningTest", "CORSTest", "CRLFInjectionTest", "CacheDeceptionTest",
     "HostBypassTest",
     "HostInjectionTest", "OpenRedirectTest", "SSRFTest", "URLParameterTest", "UnkeyedInputTest",
     "VhostDiscoveryTest", "RequestSmugglingTest", "CHECKS", "finding_types",

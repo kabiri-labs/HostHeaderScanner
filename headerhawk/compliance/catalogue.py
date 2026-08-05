@@ -22,6 +22,7 @@ _V3 = _ASVS_CHAPTER.format(file="0x12-V3-Web-Frontend-Security.md")
 _V4 = _ASVS_CHAPTER.format(file="0x13-V4-API-and-Web-Service.md")
 _V8 = _ASVS_CHAPTER.format(file="0x17-V8-Authorization.md")
 _V13 = _ASVS_CHAPTER.format(file="0x22-V13-Configuration.md")
+_V14 = _ASVS_CHAPTER.format(file="0x23-V14-Data-Protection.md")
 
 _ENTRIES = [
     Control(
@@ -144,6 +145,18 @@ _ENTRIES = [
     # (payment page script inventory and integrity) is deliberately absent:
     # nothing here inventories scripts or checks their integrity, and a control
     # that could only ever read "not assessed" is noise in an evidence report.
+    Control(
+        "ASVS-5.0:14.2.2", ASVS, "14.2.2",
+        "Sensitive data is prevented from being cached in server components "
+        "such as load balancers and application caches, or is securely purged "
+        "after use.",
+        _V14),
+    Control(
+        "ASVS-5.0:14.2.5", ASVS, "14.2.5",
+        "Caching mechanisms are configured to cache only responses that have "
+        "the expected content type for that resource and do not contain "
+        "sensitive, dynamic content.",
+        _V14),
     Control(
         "PCI-DSS-4.0.1:11.6.1", PCI, "11.6.1",
         "A change- and tamper-detection mechanism alerts on unauthorised "

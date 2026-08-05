@@ -18,6 +18,10 @@ CONTROLS_BY_TEST = {
     # one of them changes the response is finding that the end user can
     # override it. Fuzzing arbitrary names would not support this claim.
     "Unkeyed Input": ("ASVS-5.0:4.1.3",),
+    # 14.2.5 names this attack in as many words - cache only what has the
+    # expected content type and no sensitive, dynamic content - and 14.2.2
+    # is the server-side half of keeping a user page out of a shared cache.
+    "Web Cache Deception": ("ASVS-5.0:14.2.5", "ASVS-5.0:14.2.2"),
     # A bypass driven by a client-supplied header is both an override of an
     # intermediary's header and an authorization decision made on data the
     # consumer controls.
