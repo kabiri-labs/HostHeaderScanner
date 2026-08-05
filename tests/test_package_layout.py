@@ -21,6 +21,7 @@ class CheckRegistryTests(unittest.TestCase):
         "Host Header Bypass",
         "Web Cache Poisoning",
         "Unkeyed Input",
+        "Web Cache Deception",
         "CORS Misconfiguration",
         "CRLF Injection",
         "Auth Bypass",
