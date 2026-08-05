@@ -39,8 +39,14 @@ def parse_headers(raw_headers):
 def parse_arguments():
     parser = argparse.ArgumentParser(
         prog="headerhawk",
-        description="HeaderHawk - scan HTTP request headers for injection, "
-                    "SSRF, cache poisoning and access-control bypass bugs.")
+        description="HeaderHawk - assess both sides of the HTTP exchange: the "
+                    "request headers an attacker manipulates (Host, "
+                    "X-Forwarded-*, routing and URL-override headers) and the "
+                    "response headers a product is supposed to send (HSTS, "
+                    "CSP, cookie attributes, framing). Findings are confirmed "
+                    "before they are reported and mapped to the published "
+                    "requirement they fail; --evidence writes the result as a "
+                    "per-requirement compliance report.")
     parser.add_argument("url", nargs="?",
                         help="Target URL (omit when using --list or --request)")
     parser.add_argument("--list", "-l", dest="list",

@@ -1,188 +1,247 @@
-# HeaderHawk v2.13.0
+# HeaderHawk
 
-[![Version](https://img.shields.io/badge/version-2.13.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.13.1-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://img.shields.io/badge/tests-549%20passing-brightgreen.svg)](tests)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
-**HeaderHawk** is a security scanner for **HTTP header–based vulnerabilities**, covering both sides of the exchange: the request headers an attacker manipulates, and the response headers a product is supposed to send. Modern stacks trust a whole family of request headers for routing, identity and caching — `Host`, the `X-Forwarded-*` headers, `Forwarded`, client-IP headers, URL-override headers and more — and each of them is an attack surface. HeaderHawk exercises that surface systematically and reports the bugs it uncovers: Host header injection, SSRF, confirmed web cache poisoning, access-control bypass, open redirects and hidden virtual hosts.
+**Evidence that your HTTP headers are safe — in a form an auditor will accept.**
 
-Its focus is **signal over noise**. Findings are driven by evidence — unique per-scan markers, two-probe confirmation, real out-of-band correlation and stable-baseline differencing — so results are trustworthy enough to act on. And the output is built for real workflows: every finding carries a severity, reports export to JSON / Markdown / **SARIF 2.1.0**, and the process exit code lets a CI pipeline gate on the result.
+HeaderHawk assesses both sides of the HTTP exchange: the **request headers an attacker manipulates** (`Host`, `X-Forwarded-*`, `Forwarded`, client-IP and URL-override headers) and the **response headers your product is supposed to send** (HSTS, CSP, cookie attributes, framing). It confirms what it finds with a second probe, maps every finding to the published requirement it fails, and — the part that matters most — **tells you what it could not assess instead of counting it as a pass**.
+
+```bash
+python headerhawk.py https://app.example.com/ --discover \
+       --evidence compliance.md --output findings.sarif --fail-on any
+```
+
+Three artefacts, one run: a requirement-by-requirement compliance report, a SARIF file for your security dashboard, and an exit code your pipeline can gate on.
 
 ---
 
-## Table of Contents
+## Contents
 
-- [Detection Coverage](#detection-coverage)
-- [Control Mapping](#control-mapping)
-- [Endpoint Discovery](#endpoint-discovery)
-- [Authenticated Scanning](#authenticated-scanning)
-- [Scanning a Saved Request](#scanning-a-saved-request)
-- [Compliance Evidence](#compliance-evidence)
-- [Features](#features)
+- [The problem this solves](#the-problem-this-solves)
+- [What you get](#what-you-get)
+- [How it decides something is true](#how-it-decides-something-is-true)
+- [Coverage](#coverage)
+- [Where HeaderHawk fits](#where-headerhawk-fits)
+- [Scanning what you actually ship](#scanning-what-you-actually-ship)
+- [In your pipeline](#in-your-pipeline)
 - [Installation](#installation)
-- [Usage](#usage)
-  - [Basic Usage](#basic-usage)
-  - [Options](#options)
-  - [Exit Codes](#exit-codes)
-  - [Examples](#examples)
-- [Output](#output)
+- [Options](#options)
 - [Contributing](#contributing)
-- [License](#license)
-- [Disclaimer](#disclaimer)
-- [Contact](#contact)
+- [License, disclaimer, contact](#license)
 
 ---
 
-## Detection Coverage
+## The problem this solves
 
-Each module targets a distinct class of header-driven weakness and the headers/vectors that trigger it:
+Header security is where three uncomfortable facts meet.
 
-| Attack class | Headers / vectors exercised |
-| ------------ | --------------------------- |
-| **Host header injection** (cache / password-reset / link poisoning) | `Host`, `X-Forwarded-Host`, `X-Forwarded-Server`, `X-Host`, `X-Original-Host`, `X-HTTP-Host-Override`, `Forwarded`, `Base-Url`, and 10+ more routing headers — reflection of a unique marker in body, `Location` or any response header |
-| **Host validation bypass** | Duplicate `Host` headers, absolute-URI request lines, indented (line-folded) headers, host overrides — sent with a raw HTTP/1.1 client |
-| **Confirmed web cache poisoning** | Unkeyed headers (`X-Forwarded-Host`, `X-Host`, `X-Original-Host`, `Base-Url`, …) with a cache-buster and a clean re-request that proves the poisoned response is served |
-| **Web cache deception** | Static-looking suffixes (`.css`, `/nonexistent.js`, `;.css`, …) that a router ignores but a CDN keys on — confirmed by requesting the same URL again with no credentials |
-| **Unkeyed input discovery** | 90+ intermediary-set header fields searched by bisection — `X-Forwarded-Scheme`, `CDN-Loop`, `X-Envoy-Original-Path`, `X-Wap-Profile` and the rest — so a cache hole is found rather than guessed |
-| **Access-control bypass** | Internal `Host` / `X-Forwarded-For` / `X-Real-IP` / `True-Client-IP` values against 401/403 endpoints, plus path-override headers `X-Original-URL` / `X-Rewrite-URL` |
-| **SSRF via routing headers** | `Host`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-IP`, `Forwarded` pointed at internal hosts and cloud metadata endpoints |
-| **Blind SSRF (out-of-band)** | Per-scan correlation id embedded in payloads, confirmed by polling your listener |
-| **Open redirect** | `Host`-driven redirects whose `Location` host matches the injected value |
+**Nobody owns it.** `Host` handling belongs to the load balancer, `X-Forwarded-*` to the CDN, HSTS to the platform team, cookie flags to the application. Each group assumes another one has it covered. Nothing is coordinated because nothing forces it to be.
+
+**A clean scan and an unreachable target look identical.** Every scanner reports findings. When there are none, the natural reading is "compliant". But a scan that never got a valid response also reports none — and so does a scan of an authenticated product that only ever saw the login page. Automated evidence that cannot tell those apart is worse than no evidence, because it is confidently wrong.
+
+**The findings arrive in the wrong shape.** An assessor asks *"show me that requirement 4.1.3 is met."* A scanner answers with a list of URLs and header names. Somebody then rebuilds the crosswalk by hand in a spreadsheet, once per audit, and it goes stale immediately.
+
+Add the noise problem — header checks that fire on every route, every run, forever — and the predictable outcome is that the gate gets switched off and the control silently stops working.
+
+HeaderHawk is built around those four failures: **assessed-vs-not-assessed as a first-class result**, **requirement-keyed output**, **confirmation before reporting**, and **a baseline so the gate fails on regressions rather than permanently**.
+
+---
+
+## What you get
+
+### A report keyed by requirement, not by finding
+
+`--evidence report.md` (or `.json`) answers the question an assessor actually asks. Real output:
+
+```markdown
+# HeaderHawk Compliance Evidence
+
+- **Tool:** HeaderHawk 2.13.1
+- **Target(s):** https://app.example.com/
+- **Scan mode:** unauthenticated
+- **Requests:** 604/604 succeeded (0 failed)
+
+## Summary
+
+| Status | Controls |
+| --- | --- |
+| Fail | 12 |
+| Not assessed | 1 |
+| Pass | 13 |
+
+> This scan was not confirmed to be running as a logged-in user, so these results
+> describe whatever the target serves anonymously. For an authenticated product
+> that is the login page, not the application behind it.
+```
+
+Every control is then listed with its framework, the requirement text transcribed from the standard, a link to the source chapter, and its evidence:
+
+```markdown
+### ASVS-5.0:13.4.6 — FAIL
+
+- **Requirement:** The application does not expose detailed version information of backend components.
+- **Source:** https://github.com/OWASP/ASVS/blob/master/5.0/en/0x22-V13-Configuration.md
+- **Assessed by:** Response Header Posture
+- **Evidence:** 1 finding(s)
+  - **[Low] Version Disclosure** — https://app.example.com/
+    - Response header field(s) expose a component version: Server: nginx/1.18.0
+    - Reproduce: `curl -s -i 'https://app.example.com/'`
+
+### ASVS-5.0:1.2.1 — PASS
+
+- **Requirement:** Output encoding for an HTTP response is relevant for the context required,
+  including for HTTP header fields, so that untrusted data cannot change the structure of the message.
+- **Assessed by:** CRLF Injection
+- **Evidence:** assessed, no finding.
+
+### PCI-DSS-4.0.1:11.6.1 — NOT ASSESSED
+
+- **Requirement:** A change- and tamper-detection mechanism alerts on unauthorised modification
+  of the security-impacting HTTP headers and script content of payment pages.
+- **Not assessed because:**
+  - baseline comparison: no baseline was supplied, so no change detection was
+    performed (pass --baseline <previous.json>)
+```
+
+**A control only passes when a check that covers it actually completed.** That single rule is what makes the document worth putting in front of an assessor. Everything else is reported as *not assessed*, with the reason — and a finding type that maps to no catalogued requirement is listed at the end rather than quietly dropped.
+
+### Findings you can act on
+
+```
+[!] Host Header Injection Finding! [Medium]
+URL: https://app.example.com/
+Method: GET
+Header: X-Forwarded-Host
+Payload: 297aa83e0c90.example-collab.com
+Status Code: 200
+Analysis: Injected host reflected in 'Location' header: https://297aa83e0c90.example-collab.com/next
+Reproduce: curl -s -i -H 'X-Forwarded-Host: 297aa83e0c90.example-collab.com' 'https://app.example.com/'
+```
+
+Every finding carries a severity, the requirements it is evidence against, and a **copy-paste command that reproduces it** — `curl` for header and parameter issues, a `printf | ncat` or `openssl s_client` wire-level command for the raw-socket bypasses that curl cannot express.
+
+The run ends with a summary that always states coverage and reachability, so a quiet result can be read correctly:
+
+```
+========== Test Summary ==========
+Targets scanned: 1/1
+Scan mode: unauthenticated
+Requests: 604/604 succeeded (0 failed).
+Total findings: 14 (5 vulnerability, 9 posture)
+```
+
+### Reports in the format your tooling already reads
+
+`--output` picks the format from the extension: **`.json`** for pipelines, **`.md`** for humans, **`.sarif`** for GitHub code scanning and security dashboards — with per-rule `security-severity` scores, stable fingerprints so alerts do not churn, and the mapped requirement in the rule help text.
+
+---
+
+## How it decides something is true
+
+A header scanner earns its place by what it refuses to report. These are the rules HeaderHawk applies.
+
+### Confirmed, not inferred
+
+| Class | What counts as proof |
+| ----- | -------------------- |
+| **Host header injection** | A unique per-request marker comes back in the body, in `Location`, or in any response header. A guessable value would not distinguish reflection from coincidence. |
+| **Web cache poisoning** | The poisoning request is sent through an unkeyed header, then the same URL is requested **without it**. Only a marker that survives into the second response — served from cache — is reported, with `X-Cache` / `Age` / `CF-Cache-Status` context. |
+| **Web cache deception** | A page still served under a `.css` suffix is half of it. The same URL is then requested by a session carrying **no cookies and no authorization**; content only the logged-in session should have seen, coming back to an anonymous one, is a shared cache handing one user's page to another. A response that already says `no-store` or `private` is not reported at all — that control is working. |
+| **CRLF injection** | The injected header field is *named* after a unique per-scan marker, so a field carrying it cannot have come from anywhere else. A value merely echoed into `Location` is not reported. |
+| **CORS** | A per-scan origin that cannot exist is sent; only the server echoing it back counts. Severity follows `Access-Control-Allow-Credentials`, because a permissive allowlist that also allows credentials lets an attacker's page read authenticated responses. A bare `*` without credentials — correct for a public endpoint — produces nothing. |
+| **Virtual host discovery** | The default vhost is sampled repeatedly to learn its natural page-to-page variance; a candidate is reported only when a status, length or title difference survives a second probe. |
+| **SSRF** | Response-time deviation, internal-target indicators and header anomalies are combined behind a weighted threshold. Anomalies are measured only against headers proven stable across baseline samples, so request ids, tracing headers, `CF-RAY` and nonces are learned as volatile and ignored. |
+| **Request smuggling** | A hang is reported only after two consecutive probes agree **and** a well-formed request in between still returns normally — which is what separates a desync from a target that merely became slow. |
+
+### Honest about the limits of its own evidence
+
+Timing is evidence, not proof. Every smuggling finding carries a `Confirming this` note stating exactly that, what to run for certainty, and what that costs — printed to the console and included in every report format. Confirming a desync for real is **intrusive**: `--enable-desync` plants a smuggled prefix that can attach to another user's request. It is opt-in, and the warning says why.
+
+The same applies elsewhere: an unconfirmed cache-deception finding tells you it needs an authenticated session to prove, and which flags supply one.
+
+### One defect, one finding
+
+Five static-looking suffixes that all work are one defect with one fix, so they are one finding that names all five. A server that reflects *any* origin is reported once as reflection, not five times over as each narrower bypass. One CRLF hole is reported once, not once per encoding that reaches it.
+
+### Findings split by class, so the gate stays useful
+
+Proven **vulnerabilities** and missing **posture** controls are counted separately, and `--fail-on` decides which gate the exit code. Turning on posture reporting does not turn an existing pipeline red.
+
+---
+
+## Coverage
+
+**14 check modules, 35 finding types, 26 catalogued requirements.**
+
+### Request side — what an attacker manipulates
+
+| Attack class | Vectors exercised |
+| ------------ | ----------------- |
+| **Host header injection** | 19 routing headers — `Host`, `X-Forwarded-Host`, `X-Forwarded-Server`, `X-Host`, `X-Original-Host`, `X-HTTP-Host-Override`, `Forwarded`, `Base-Url` and more — with marker reflection checked in body, `Location` and every response header |
+| **Host validation bypass** | Duplicate `Host` headers, absolute-URI request lines, line-folded headers, host overrides — sent verbatim by a purpose-built raw HTTP/1.1 client, because `requests` would normalise them away |
+| **Unkeyed input discovery** | **91 intermediary-set header fields** searched by bisection — `X-Forwarded-Scheme`, `CDN-Loop`, `X-Envoy-Original-Path`, `X-Wap-Profile`, … Ruling out the whole list costs **one request**; isolating one header among ninety costs about a dozen |
+| **Web cache poisoning** | Unkeyed headers plus a cache-buster and a clean re-request that proves the poisoned response is served back |
+| **Web cache deception** | Static-looking suffixes (`.css`, `/nonexistent.js`, `;.css`, …) a router ignores but a CDN keys on |
+| **Access-control bypass** | Internal `Host` / `X-Forwarded-For` / `X-Real-IP` / `True-Client-IP` values against 401/403 endpoints, plus the `X-Original-URL` / `X-Rewrite-URL` path-override family |
+| **SSRF via routing headers** | Routing headers pointed at internal hosts and cloud metadata endpoints |
+| **Blind SSRF (out-of-band)** | Per-scan correlation id in payloads, confirmed by polling your listener — interactsh, webhook.site, RequestBin, Burp Collaborator exports, custom sinks |
 | **URL-parameter SSRF** | `url`, `next`, `redirect`, `dest`, `uri`, `path`, … against internal targets, with baseline differencing |
-| **Virtual host discovery** | `Host`-header brute force (built-in or custom wordlist) with two-probe confirmation |
-| **CRLF injection / response splitting** | Percent-encoded, double-encoded and overlong-UTF-8 `CR`/`LF` in URL parameters, the URL path and decoded request headers — confirmed by a response header field named after a unique per-scan marker |
-| **HTTP request smuggling** | `Content-Length` / `Transfer-Encoding` disagreement between front-end and back-end — CL.TE and TE.CL, detected by timing |
-| **CORS origin validation** | `Origin` reflection, `null` origin, prefix / suffix / trailing-dot / subdomain allowlist bypasses and plaintext-origin trust — each confirmed by the server echoing the origin back in `Access-Control-Allow-Origin` |
-| **Response header posture** | `Strict-Transport-Security`, `frame-ancestors` / `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy`, and version banners (`Server`, `X-Powered-By`, …) |
-| **Content-Security-Policy analysis** | `object-src` / `base-uri`, effective `script-src` (`'unsafe-inline'`, `'unsafe-eval'`, broad sources — with nonce, hash and `'strict-dynamic'` semantics applied), and violation reporting |
-| **Cookie attributes** | `Secure`, `HttpOnly` (on session-like cookies), `SameSite`, `__Secure-` / `__Host-` name prefixes and the 4096-byte size limit, per `Set-Cookie` field |
+| **Open redirect** | `Host`-driven redirects whose `Location` host matches the injected value |
+| **CRLF injection / response splitting** | Percent-encoded, double-encoded and overlong-UTF-8 `CR`/`LF` in parameters, path and decoded headers |
+| **HTTP request smuggling** | CL.TE and TE.CL front-end/back-end disagreement, detected by timing |
+| **Virtual host discovery** | `Host` brute force over 44 built-in names or your own wordlist, two-probe confirmed |
+
+### Response side — what your product is supposed to send
+
+| Area | Assessed |
+| ---- | -------- |
+| **Transport & framing** | `Strict-Transport-Security` (including `max-age` and `includeSubDomains`), `frame-ancestors` / `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy` |
+| **CSP, read the way a browser reads it** | `'unsafe-inline'` is **not** reported when a nonce or hash is also present, because a browser ignores it there; `'strict-dynamic'` suppresses host and scheme allowlist findings for the same reason; `object-src` accepts a `default-src` fallback while `base-uri`, which has none, must be explicit; `*.example.com` is treated as an allowlist, not an open door |
+| **Cookies, per `Set-Cookie` field** | `Secure`, `SameSite`, `__Secure-` / `__Host-` prefixes and the 4096-byte limit — parsed individually, including several folded into one header, without tearing apart the comma inside an `Expires` date. `HttpOnly` is reported only for cookies whose name suggests a session or sensitive value, since an analytics cookie legitimately needs script access |
+| **Information exposure** | Version banners in `Server`, `X-Powered-By` and friends |
+
+### Requirements catalogued
+
+**OWASP ASVS 5.0** — 25 requirements across encoding (1.2.1), cookies (3.3.1–3.3.5), browser controls (3.4.1–3.4.8), redirects (3.7.2), intermediary headers (4.1.3), message boundaries (4.2.1–4.2.2), authorization (8.3.1), SSRF allowlists (13.2.4–13.2.5), exposure (13.4.5–13.4.6) and caching (14.2.2, 14.2.5).
+
+**PCI DSS 4.0.1** — requirement 11.6.1, satisfied by running with `--baseline`. See [In your pipeline](#in-your-pipeline).
+
+Control ids are transcribed from the published standard and each links to the chapter it came from. **A finding type with no genuinely matching requirement is reported as unmapped rather than attached to an approximate one** — an id that does not hold up under review is worse than an empty column. `Permissions-Policy` is the current example: ASVS 5.0 has no requirement for it, so it is reported without one.
 
 ---
 
-## Control Mapping
+## Where HeaderHawk fits
 
-Every finding carries the published security controls it is evidence against, so
-a report answers *which requirement does this fail?* without a manual crosswalk.
+It is a narrow tool, deliberately. Here is where it sits next to the things you probably already run.
 
-| Finding | Controls |
-| ------- | -------- |
-| Host header injection / bypass, web cache poisoning, unkeyed input | ASVS 5.0 **4.1.3** — an HTTP header field set by an intermediary layer cannot be overridden by the end user |
-| Web cache deception | ASVS 5.0 **14.2.5** — caches store only responses with the expected content type and no sensitive, dynamic content — and **14.2.2** |
-| Access-control bypass | ASVS 5.0 **4.1.3**, **8.3.1** — authorization enforced at a trusted service layer |
-| SSRF, URL-parameter SSRF, blind SSRF | ASVS 5.0 **13.2.4**, **13.2.5** — allowlist of systems the application and server may call |
-| Open redirect | ASVS 5.0 **3.7.2** — redirects to another hostname only to allowlisted destinations |
-| CORS misconfiguration | ASVS 5.0 **3.4.2** — `Access-Control-Allow-Origin` is a fixed value or validated against an allowlist |
-| Header change detection | PCI DSS 4.0.1 **11.6.1** — a mechanism alerts on unauthorised modification of security-impacting HTTP headers (satisfied by running `--baseline`) |
-| HTTP request smuggling | ASVS 5.0 **4.2.1**, **4.2.2** — message boundaries determined consistently, `Content-Length` consistent with the body |
-| CRLF injection / response splitting | ASVS 5.0 **1.2.1** — output encoding relevant to the context, including HTTP header fields, so untrusted data cannot change the message structure |
-| Virtual host discovery | ASVS 5.0 **13.4.5** — internal documentation and monitoring endpoints not exposed |
-| Response header posture | ASVS 5.0 **3.4.1** (HSTS), **3.4.3** (CSP), **3.4.4** (nosniff), **3.4.5** (Referrer-Policy), **3.4.6** (frame-ancestors), **3.4.7** (CSP reporting), **3.4.8** (COOP), **13.4.6** (version disclosure) |
-| Cookie attributes | ASVS 5.0 **3.3.1** (Secure + name prefix), **3.3.2** (SameSite), **3.3.3** (`__Host-` prefix), **3.3.4** (HttpOnly on session values), **3.3.5** (size limit) |
+| Tool | Strongest at | What HeaderHawk adds |
+| ---- | ------------ | -------------------- |
+| **Burp Suite Pro** (+ Param Miner, HTTP Request Smuggler) | The deepest interactive research on exactly these classes — this is where much of the technique originated | Headless, repeatable, unattended. Same classes without an operator driving the GUI, and the output is requirement-keyed evidence rather than an issue list |
+| **Nuclei** | Enormous community template breadth across every vulnerability class | Templates largely match on presence and absence. HeaderHawk confirms with a second probe, searches 91 headers by bisection rather than testing a fixed list, and reports what it could not assess |
+| **OWASP ZAP** | Full DAST across the whole application surface | Depth on header-specific classes that a general crawler treats shallowly — unkeyed input discovery, cache deception, desync timing — plus the compliance report |
+| **securityheaders.com**, **Mozilla Observatory** | Instant response-header grade for a single URL | The request side, which those do not test at all; many endpoints per run; CI gating; and evidence rather than a letter grade |
+| **testssl.sh** | The model: one focused layer, exhaustively, honestly, CI-friendly | The same idea one layer up — headers instead of TLS |
 
-The mapping surfaces in every format: a **Control Coverage** table and a per-finding
-`Controls` line in Markdown, a `controls` field in JSON, and SARIF rule `tags` plus
-`help` text so GitHub code scanning shows the requirement alongside the alert.
+### What HeaderHawk is not
 
-Control ids are transcribed from the published standard and each links to the
-chapter it came from. A finding type with no genuinely matching control is
-reported as unmapped rather than attached to an approximate requirement — an id
-that does not hold up under review is worse than an empty column. `Permissions-Policy`
-is the current example: ASVS 5.0 has no requirement for it, so it is reported
-without one.
+- **Not a full DAST.** No SQL injection, no XSS body scanning, no business-logic or authorization-model testing. Run it alongside ZAP or Burp, not instead of them.
+- **Not HTTP/2 or HTTP/3 aware.** All traffic is HTTP/1.1, so HTTP/2-specific downgrade desync is out of scope — and reported as not assessed rather than passed.
+- **Not a runtime control.** It tells you a header is missing; it does not add one.
+- **Not a substitute for a human on the classes it flags as timing-only.** It says so in the finding.
 
 ---
 
-## Endpoint Discovery
+## Scanning what you actually ship
 
-A product is not one URL. Header posture varies by route — the login page, the
-API and the static assets rarely carry the same policy — so assessing only the
-URL you typed answers a narrower question than the one being asked.
+The default is one URL, anonymous. Real products are neither.
 
-```bash
-python headerhawk.py https://app.example.com/ --discover --max-endpoints 20
-```
+### Drive the scan from a request you captured
 
-`--discover` reads what the target already publishes about itself: an
-**OpenAPI/Swagger** description, **sitemap.xml** (following a sitemap index one
-level), **robots.txt**, and the **same-origin links** on the page itself.
-Nothing is guessed or brute-forced — a scan that invents paths spends its budget
-on 404s.
-
-### URLs that are the same endpoint collapse
-
-`/order/1041`, `/order/1042` and `/order/1043` are three URLs, one endpoint, one
-set of response headers and one place a fix would go. Identifier-looking path
-segments become placeholders and a query string reduces to its parameter names,
-so `/search?q=hats` and `/search?q=shoes` also count once. Without that, a
-paginated site spends the entire budget on a single route.
-
-The URL you asked for always comes first and is never displaced. When more
-endpoints are found than `--max-endpoints` allows, the run says so rather than
-implying the product was that small.
-
-### Some checks belong to the host, not the route
-
-| Scope | Checks |
-| ----- | ------ |
-| Endpoint | response header posture, CSP, cookies, Host header injection, cache poisoning, CORS, CRLF injection, access-control bypass, URL-parameter SSRF, open redirect |
-| Host | virtual host discovery, Host validation bypass, SSRF via routing headers, request smuggling |
-
-A front-end that mis-parses `Host`, or that desyncs from its back-end, does so
-for every route at once. Running those per endpoint would issue identical
-requests and file identical findings, so they run against the requested target
-only — the cost of a scan is `4 + 8×N` checks rather than `12×N`.
-
----
-
-## Authenticated Scanning
-
-Pointing an unauthenticated scan at an authenticated product is the quietest way
-to get a worthless report. Every request comes back as the login page, so the
-scanner assesses *the login page's* headers and reports them as the product's.
-Nothing errors — the report simply describes the wrong pages.
-
-```bash
-export HH_LOGIN='user=admin&pass=s3cret'
-python headerhawk.py https://app.example.com/dashboard \
-       --auth-login-url https://app.example.com/login \
-       --auth-login-data env:HH_LOGIN \
-       --auth-verify-text 'Sign out'
-```
-
-Credentials can be a cookie (`--auth-cookie 'sid=…'`) or a form login. Either
-can be given as `env:NAME` to keep them out of the command line and out of shell
-history.
-
-### The session is checked, not assumed
-
-- **Before the scan.** If you said what a logged-in page contains and it is not
-  there, the scan **stops** rather than assess the logged-out pages and present
-  them as the product's.
-- **With no expectation given**, the authenticated response is compared with an
-  anonymous one. Credentials that change nothing are not necessarily wrong, but
-  the scan is then not assessing the authenticated surface, and the report says
-  so instead of implying otherwise.
-- **After the scan.** A scan that walks a site can log itself out partway
-  through; if the session was valid at the start and not at the end, the results
-  are reported as inconclusive.
-
-The scan mode — `authenticated`, `authentication unverified` or
-`unauthenticated` — appears in the summary (never suppressed, even with
-`--quiet`) and in the evidence report, because whether the scan saw the product
-or its login page decides what every other line means.
-
----
-
-## Scanning a Saved Request
-
-Real requests are rarely a bare URL. The one worth testing carries a session
-cookie, a bearer token, a CSRF token, a content type, a JSON body and a dozen
-headers a proxy or a single-page app added along the way. Reconstructing that on
-the command line with a stack of `-H` flags is tedious and easy to get wrong.
-
-Save the request from your browser's dev tools or an intercepting proxy and hand
-the file over:
+The request worth testing carries a session cookie, a bearer token, a CSRF token, a content type and a JSON body. Save it from your browser's dev tools or an intercepting proxy and hand the file over:
 
 ```bash
 python headerhawk.py --request order.txt
@@ -191,7 +250,6 @@ python headerhawk.py --request order.txt
 ```http
 POST /api/v2/orders?page=2 HTTP/1.1
 Host: shop.example
-User-Agent: Mozilla/5.0
 Content-Type: application/json
 Cookie: session=abc123; theme=dark
 Authorization: Bearer t0ken
@@ -201,399 +259,186 @@ Content-Length: 17
 {"quantity": 100}
 ```
 
-The file supplies the target URL, the method and the body, so `<target_url>` and
-`--methods` become optional. Give an explicit URL to replay the same request
-against another host (staging, a second region); an explicit `--methods` or `-H`
-also wins over the file.
+The file supplies the URL, the method and the body, so the positional URL and `--methods` become optional. Give an explicit URL to replay the same request against staging or another region.
 
-### The file is a starting point, not a fixed request
+**The file is a starting point, not a fixed request.** Every check still sets the header it is testing: where the file already carries that header the check's value **replaces** it, and where it does not the check **adds** it. That holds down to the raw-socket probes, so a Host bypass is tested as the authenticated request it really is.
 
-Every check still sets the header it is testing:
+Four things are deliberately not carried over. `Host` decides the target rather than travelling as a header — pinning it would neutralise every Host-manipulation check. `Content-Length` and `Transfer-Encoding` are the smuggling probes' own subject. The connection-management fields describe one hop that is not the one being made. And the body is replayed only on the method the file used, bounded by the declared `Content-Length`.
 
-- **The file already carries that header** — the check's value **replaces** it,
-  so the request goes out with one value, not two.
-- **The file does not carry it** — the check **adds** it, and everything else in
-  the file rides along unchanged.
+Credentials from the file **never reach a report**: their values are redacted from both the stored wire request and the reproduction command, which then says what to add back and where to find it.
 
-That is exactly how a per-request header meets a session header in `requests`,
-so it holds for the socket-level checks too: the raw Host-bypass and smuggling
-probes are written from the file's header block rather than from four defaults,
-and a bypass is therefore tested as the authenticated request it really is.
-
-### What is deliberately not carried over
-
-| Field | Why |
-| ----- | --- |
-| `Host` | It decides the target rather than travelling as a header. Pinning the file's value would neutralise **every** Host-manipulation check — the payload and the real `Host` would both be sent, and the real one would win. |
-| `Content-Length`, `Transfer-Encoding` | They describe the saved transmission. The smuggling probes' whole subject is a disagreement between these two, so a value from the file would describe a different message. |
-| `Connection`, `Keep-Alive`, `Upgrade`, `Proxy-Connection`, `Expect` | Connection management for one particular hop, not for the requests being made now. |
-
-The body is replayed **only on the method the file used**. A saved `POST` body
-sent on a `GET` would be a different request from the one you captured, and on
-some endpoints a destructive one.
-
-### Scheme
-
-An absolute-URI request line (`GET https://shop.example/x HTTP/1.1`) is honoured
-as written. Otherwise the scheme comes from `--request-scheme {http,https}`,
-then from a `:80`/`:443` port in the `Host` header, and finally defaults to
-**HTTPS** — guessing plaintext for a request that carried a session cookie would
-be the more dangerous default.
-
-A file that cannot be parsed **stops the scan** rather than being skipped:
-continuing would quietly test a bare URL without the cookie and the body that
-were the reason for supplying a request in the first place.
-
----
-
-## Compliance Evidence
-
-`--evidence report.md` (or `.json`) writes a report keyed by **requirement**
-rather than by finding — the question an assessor actually asks:
-
-| Status | Controls |
-| --- | --- |
-| Fail | 11 |
-| Not assessed | 0 |
-| Pass | 11 |
-
-Each control is listed with its framework, the requirement text, a link to the
-chapter it came from, and its evidence: the findings that failed it, or the
-checks that assessed it and found nothing.
-
-**A control is only reported as passing when a check that covers it actually
-completed.** This is the part that decides whether the report is worth anything.
-A scan of a host it could not reach produces no findings — reporting that as full
-compliance would be worse than producing no report at all. So anything the scan
-could not judge is listed as *not assessed*, with the reason:
-
-```
-### ASVS-5.0:4.2.1 — NOT ASSESSED
-- **Not assessed because:**
-  - HTTP Request Smuggling: a timing baseline could not be measured, so a delay
-    would have had nothing to be compared against
-```
-
-Findings whose type maps to no catalogued requirement are listed at the end
-rather than dropped, so nothing the scan found is left out of the report just
-because there is no requirement to hang it on.
-
-### Tracking change over time
+### Log in first
 
 ```bash
-python headerhawk.py https://example.com -o baseline.json          # accept today's state
-python headerhawk.py https://example.com --baseline baseline.json \
-       --fail-on any --fail-on-new                                  # fail only on regressions
+export HH_LOGIN='user=admin&pass=s3cret'
+python headerhawk.py https://app.example.com/dashboard \
+       --auth-login-url https://app.example.com/login \
+       --auth-login-data env:HH_LOGIN \
+       --auth-verify-text 'Sign out'
 ```
 
-`--baseline` compares against a previous scan and reports `N new, N fixed, N
-unchanged`. `--fail-on-new` narrows the exit-code gate to the new ones, so a team
-that has accepted its current findings gets a pipeline that fails on a
-*regression* instead of failing forever.
+Credentials can be a cookie (`--auth-cookie 'sid=…'`) or a form login; either accepts `env:NAME` to stay out of the command line and shell history.
 
-A finding keeps the same identity between scans even though several checks put a
-fresh random marker in every payload — marker-shaped tokens are folded out before
-matching. Without that, every finding would look new on every run, the pipeline
-would fail permanently, and the feature would be switched off.
+**The session is checked, not assumed.** If you said what a logged-in page contains and it is not there, the scan **stops** rather than assess the logged-out pages and present them as the product's. With no expectation given, the authenticated response is compared with an anonymous one, and a session that changes nothing is reported as such. And because a scan that walks a site can log itself out partway through, the session is re-verified at the end — if it was valid at the start and not at the end, the results are reported as inconclusive.
 
-Running the comparison is also what satisfies **PCI DSS 4.0.1 requirement
-11.6.1**, which asks for a mechanism that detects unauthorised modification of
-security-impacting HTTP headers. The evidence report marks 11.6.1 as assessed
-when a baseline was supplied, and as *not assessed* when one was not — detecting
-a change is the mechanism working, not the control failing.
+The scan mode — `authenticated`, `authentication unverified` or `unauthenticated` — appears in the summary and in the evidence report, never suppressed, because whether the scan saw the product or its login page decides what every other line means.
 
----
-
-## Features
-
-### Detection & accuracy
-
-- **Response header posture**: one request establishes which browser security controls the response actually carries — HSTS (including `max-age` and `includeSubDomains`), CSP, frame protection, `nosniff`, `Referrer-Policy`, COOP, `Permissions-Policy` and version banners. Rules stay quiet when the control is genuinely in place, and HSTS is not reported over plaintext where a browser would ignore it anyway.
-- **CSP analysed the way a browser reads it**, not by presence alone: `'unsafe-inline'` is *not* reported when a nonce or hash is also present, because a browser ignores it there; `'strict-dynamic'` suppresses host and scheme allowlist findings for the same reason; `object-src` accepts a `default-src` fallback while `base-uri`, which has none, must be explicit; and `*.example.com` is treated as an allowlist rather than an open door.
-- **Per-cookie assessment**: every `Set-Cookie` field is parsed individually — including several folded into one header, without tearing apart the comma inside an `Expires` date — and checked for `Secure`, `SameSite`, name prefixes and size. `HttpOnly` is reported only for cookies whose name suggests a session or sensitive value (`sessionid`, `PHPSESSID`, `authtoken`, …), since an analytics cookie legitimately needs script access.
-
-- **Unique-marker reflection**: injects a random per-request marker so a reflected Host is a high-confidence finding, not a guess — across `Host`, `X-Forwarded-Host`, `Forwarded` and 15+ other headers, checked in the body, the `Location` header and every response header.
-- **Raw HTTP/1.1 client**: a purpose-built client (not `requests`) sends malformed requests verbatim — duplicate `Host` headers, absolute-URI request lines, line-folded headers — the building blocks of most Host validation bypasses.
-- **Cache deception proved, not inferred**: a page still served under a `.css` suffix is only half of it. The same URL is then requested from a session carrying no cookies and no authorization — content that only the logged-in session should have seen, coming back to an anonymous one, is a shared cache handing one user's page to another. A response that already says `no-store` or `private` is not reported at all; that control is working.
-- **Unkeyed inputs found by search, not by guesswork**: 90+ header fields a load balancer, proxy or CDN sets are sent in batches, and a batch that moves the response is bisected until the header responsible is isolated. Ruling out the whole list costs **one request**; finding one header among ninety costs about a dozen. Every probe carries its own cache-buster, because otherwise a cache in front of the target answers the entire search with the first response it stored.
-- **Confirmed cache poisoning, not just reflection**: a cache-buster is planted, the poisoning request is sent through an unkeyed header, and the URL is re-requested *without* it; only a surviving marker (served from cache) is reported, with `X-Cache` / `Age` / `CF-Cache-Status` context.
-- **Weighted SSRF scoring**: response-time deviation, internal-target indicators (`root:x:0:0:`, cloud-metadata markers, connection errors) and header anomalies are combined behind a threshold. Header anomalies are measured only against headers proven stable across baseline samples, so per-request identifiers (request ids, tracing, `CF-RAY`, nonces) are learned as volatile and ignored.
-- **Confirmed virtual-host discovery**: the default vhost is sampled repeatedly to learn its natural page-to-page variance; a candidate is reported only when a status, length or title difference is confirmed on a second probe — dynamic content does not masquerade as a hidden host.
-- **Proven CRLF injection**: the injected field is named after a unique per-scan marker, so a response header field carrying it cannot have come from anywhere else — a value merely *echoed* into `Location` is not reported. One hole is reported once, not once per encoding that reaches it.
-- **Request smuggling, detected without smuggling anything**: a probe whose body deliberately disagrees with its own `Content-Length` leaves whichever server loses the disagreement waiting for bytes that never arrive. A hang is only reported after two consecutive probes agree *and* a well-formed request in between still returns normally — which is what separates a desync from a target that merely became slow. Nothing is planted on the connection, so a scan does not tamper with other users' traffic.
-- **Honest about what timing proves**: every smuggling finding carries a `Confirming this` note stating that a delay is evidence rather than proof, what to run for certainty, and what that costs. It is printed to the console and included in every report format.
-- **Proven CORS findings**: a unique per-scan origin that cannot exist is sent as `Origin`; only the server echoing it back counts. Severity follows `Access-Control-Allow-Credentials`, since a permissive allowlist that also allows credentials means an attacker's page can read authenticated responses. A server that reflects *anything* is reported once as reflection rather than five times over as each narrower bypass, and a fixed allowlist — or a bare `*` without credentials, which is correct for a public endpoint — produces nothing.
-- **Real out-of-band confirmation**: embeds a per-scan correlation id into OOB payloads and, given a listener export URL, polls it to confirm blind SSRF. Works with interactsh, webhook.site, RequestBin, Burp Collaborator exports and custom sinks.
-
-### Engine, workflow & reporting
-
-- **Endpoint discovery that stays bounded**: reads the target's own OpenAPI, sitemap, robots.txt and links, collapses URLs that are the same endpoint, and keeps a fixed number — with host-level checks running once rather than once per route. See [Endpoint Discovery](#endpoint-discovery).
-- **Authenticated scanning that checks itself**: log in by cookie or form, and the session is verified before *and* after the scan — an unauthenticated run is never reported as an authenticated one. See [Authenticated Scanning](#authenticated-scanning).
-- **Scan the request you actually captured**: `--request` takes a raw HTTP request saved from a browser or an intercepting proxy — cookies, tokens, content type and body intact — and every check replaces the header it is testing or adds it when absent, right down to the raw-socket probes. See [Scanning a Saved Request](#scanning-a-saved-request).
-- **Evidence report by requirement**: `--evidence` answers *did this product meet each requirement, and how do you know?* — and never reports a requirement as met when the scan could not judge it. See [Compliance Evidence](#compliance-evidence).
-- **Control-mapped findings**: each finding cites the OWASP ASVS 5.0 requirements it is evidence against, in every report format — see [Control Mapping](#control-mapping).
-- **Severity-rated findings**: every finding carries a severity band (High / Medium / Low), shown in the summary and in every report format for quick triage.
-- **Reports in JSON, Markdown or SARIF 2.1.0**: chosen by output extension. SARIF includes per-rule `security-severity` scores and stable fingerprints, dropping straight into GitHub code scanning or a security dashboard.
-- **Findings split by class**: proven *vulnerabilities* and missing *posture* controls are counted separately, and `--fail-on` decides which of them gate the exit code — so posture reporting can be switched on without turning an existing pipeline red.
-- **CI-friendly exit codes**: `0` = clean, `1` = findings, `2` = the scan could not run (bad input, interrupted, or the target was unreachable) — an unreachable host is never mistaken for a clean result.
-- **Batch scanning**: `--list` scans a whole file of URLs in one run, aggregating findings into a single report, summary and exit code.
-- **Copy-paste reproduction**: each finding ships a ready-to-run command — `curl` for header/parameter issues, a `printf | ncat` / `openssl s_client` wire-level command for raw bypasses.
-- **Proxy-aware, end to end**: `--proxy` routes the whole scan through an upstream/intercepting proxy (e.g. Burp) — including the raw bypass traffic, tunnelled via `CONNECT` so the malformed requests stay intact. Supports `user:pass@` basic auth.
-- **WAF-friendly rate limiting**: `--rate` caps the entire scan (all threads plus the raw client) at a fixed requests-per-second budget to stay under rate-based blocking.
-- **Fast and configurable**: bounded `ThreadPoolExecutor` with connection pooling and automatic retries, configurable HTTP methods, timeout, custom headers and optional TLS-verification bypass.
-- **Quiet / TTY-aware output**: `--quiet` (auto-enabled when stdout is not a TTY) strips progress bars and colours so piped and CI logs stay clean, while `Ctrl+C` stops the run gracefully without losing collected results.
-
----
-
-## Installation
-
-### Prerequisites
-
-- **Python 3.6** or higher.
-
-### Clone the Repository
+### Cover more than one route
 
 ```bash
-git clone https://github.com/kabiri-labs/HeaderHawk.git
-cd HeaderHawk
+python headerhawk.py https://app.example.com/ --discover --max-endpoints 20
 ```
 
-### Install Dependencies
+`--discover` reads what the target already publishes about itself: an **OpenAPI/Swagger** description, **sitemap.xml** (following a sitemap index one level), **robots.txt**, and the **same-origin links on the page**. Nothing is guessed or brute-forced — a scan that invents paths spends its budget on 404s.
 
-Install the required Python packages using `pip`:
+URLs that are the same endpoint collapse: `/order/1041`, `/order/1042` and `/order/1043` are three URLs, one endpoint, one set of headers and one place a fix would go. Identifier-looking path segments become placeholders and a query string reduces to its parameter names. Without that, a paginated site spends the whole budget on one route. The URL you asked for always comes first and is never displaced, and when more endpoints are found than the limit allows, the run says so rather than implying the product was that small.
 
-```bash
-pip install -r requirements.txt
-```
+Some checks belong to the host rather than the route — a front-end that mis-parses `Host`, or desyncs from its back-end, does so for every route at once:
 
-Alternatively, install them individually:
+| Scope | Checks |
+| ----- | ------ |
+| Endpoint | response header posture, CSP, cookies, Host header injection, cache poisoning, unkeyed inputs, cache deception, CORS, CRLF injection, access-control bypass, URL-parameter SSRF, open redirect |
+| Host | virtual host discovery, Host validation bypass, SSRF via routing headers, request smuggling |
 
-```bash
-pip install requests tqdm colorama urllib3
-```
+Running those per endpoint would issue identical requests and file identical findings, so they run against the requested target only.
 
----
-
-## Usage
-
-```bash
-python headerhawk.py [options] <target_url>
-```
-
-### Basic Usage
-
-```bash
-python headerhawk.py http://example.com
-```
-
-### Options
-
-- `<target_url>`: The target URL to scan. Required unless `--list` or `--request` is given.
-- `--list <file>` or `-l`: Scan every URL in a file (one per line; blank lines and `#` comments are ignored). Findings from all targets are aggregated into one report.
-- `--request <file>` or `-r`: Drive the scan from a raw HTTP request saved from a browser or an intercepting proxy. Its URL, method, headers and body are used; each check still replaces the header it is testing, and adds it when the file does not carry one. See [Scanning a Saved Request](#scanning-a-saved-request).
-- `--request-scheme <http|https>`: Scheme for `--request` when the file has no absolute URL. Defaults to the scheme implied by a `:80`/`:443` port in `Host`, otherwise `https`. Requires `--request`.
-- `--oob <domain>`: Out-of-Band (OOB) domain embedded into payloads for SSRF correlation.
-- `--oob-poll-url <url>`: Listener export URL polled after the scan to confirm OOB interactions.
-- `--wordlist <file>` or `-w`: Custom virtual-host wordlist for discovery (one name per line).
-- `--threads <number>`: Number of concurrent threads (default `5`). Must be between 1 and 20.
-- `--rate N`: Cap the whole scan (all threads combined, including raw-HTTP bypass traffic) at `N` requests per second. Default `0` means unlimited; set a low value (e.g. `5`) to stay under WAF or rate-based blocking.
-- `--timeout <seconds>`: Per-request timeout in seconds (default `10`).
-- `--methods <list>`: Comma-separated HTTP methods to test (default `GET`, or the method in `--request`; e.g. `GET,POST`).
-- `--header <"Name: Value">` or `-H`: Add a custom request header. Repeatable.
-- `--proxy <url>`: Route traffic through an upstream proxy (e.g. `http://127.0.0.1:8080`), including the raw-HTTP bypass tests, which are tunnelled via `CONNECT`. Supports optional `user:pass@` basic auth.
-- `--insecure` or `-k`: Disable TLS certificate verification — needed for staging and lab hosts with a self-signed certificate. This genuinely disables verification even when the environment sets `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE`, which otherwise override it. Without it, a scan of an untrusted-certificate host fails every request and says so, pointing at this flag.
-- `--verbose <level>`: Verbosity level (1 or 2). Level 2 also records non-findings for the report.
-- `--enable-desync`: Confirm a suspected request-smuggling desync by planting a smuggled prefix and checking whether a following request comes back affected. **Intrusive** — see the warning below. Off by default; without it, smuggling is reported from timing alone.
-- `--fail-on <vuln|posture|any|none>`: Which findings make the process exit `1`. Default `vuln` — only proven vulnerabilities. `posture` counts missing response-header controls, `any` counts both, `none` never fails on findings (report-only runs).
-- `--quiet` or `-q`: Suppress progress bars, colours and status chatter (only findings and the final summary are printed). Auto-enabled when stdout is not a TTY, so piped/CI logs stay clean.
-- `--discover`: Scan the endpoints the target publishes about itself, instead of only the URL given. See [Endpoint Discovery](#endpoint-discovery).
-- `--max-endpoints <n>`: Most endpoints to scan when discovering (default 20).
-- `--openapi <url>`: URL of an OpenAPI/Swagger description, when it is not at a standard path. Requires `--discover`.
-- `--auth-cookie <cookies>`: Scan with these cookies, as `'a=1; b=2'`. Accepts `env:NAME`.
-- `--auth-login-url <url>` / `--auth-login-data <body>` / `--auth-login-method <method>`: Log in by submitting a form before scanning. The body accepts `env:NAME`.
-- `--auth-verify-text <text>` / `--auth-verify-absent <text>`: What a logged-in (or logged-out) page contains. The scan stops rather than report an unauthenticated run as an authenticated one. See [Authenticated Scanning](#authenticated-scanning).
-- `--baseline <file>`: A previous scan's JSON output. Findings are compared against it and reported as new, fixed or unchanged.
-- `--fail-on-new`: Gate the exit code on findings that are **not** in `--baseline`, so a pipeline fails on a regression rather than on findings the team has already accepted. Requires `--baseline`.
-- `--evidence <file>`: Write a per-control compliance evidence report (`.md` or `.json`) — every catalogued requirement reported as Pass, Fail or Not assessed, with its evidence or the reason it could not be judged. See [Compliance Evidence](#compliance-evidence).
-- `--output <file>` or `-o <file>`: Save results to a file. The format is chosen by extension: `.json`, `.sarif` (SARIF 2.1.0 for GitHub code scanning / security dashboards) or `.md`.
-
-### Request Smuggling and `--enable-desync`
-
-Smuggling detection is **timing-based by default and sends nothing that can affect
-another user**. A probe is shaped so that the server which loses the
-`Content-Length` / `Transfer-Encoding` disagreement waits for a body that never
-arrives; the delay is the signal. CL.TE is always probed before TE.CL, because on
-a CL.TE-vulnerable target the TE.CL probe would leave the front-end holding a
-partial request and disrupt other users.
-
-A delay is strong evidence but not proof — a slow upstream, a rate limiter or a
-stalled connection pool produce the same symptom, and a target with no front-end
-cannot desync at all. Findings say so in a `Confirming this` note rather than
-overstating themselves.
-
-`--enable-desync` buys certainty and costs restraint. It plants a smuggled prefix
-and then issues a normal request to see whether the second comes back affected —
-the prefix sits on the back-end connection and **can attach itself to another
-user's request, corrupting or misrouting live traffic**. Use it only against a
-system you are authorised to disrupt, and preferably outside peak hours. A
-confirmed finding is reported as `Vulnerable` rather than `Potentially Vulnerable`.
-
-### Exit Codes
-
-The process exit code reflects the scan outcome, so it can gate a CI pipeline:
-
-| Code | Meaning |
-| ---- | ------- |
-| `0`  | Scan completed and **no** findings were reported. |
-| `1`  | Scan completed and **at least one** gating finding was reported (see `--fail-on`). |
-| `2`  | The scan could not run meaningfully — invalid URL, interrupted, or the target was unreachable (every request failed). |
-
-By default only vulnerability-class findings gate the build, so enabling the posture check does not change the exit code of an existing pipeline. Use `--fail-on any` to gate on posture too, or `--fail-on none` for a report-only run.
-
-If every request failed because the certificate was not trusted, the summary says so explicitly and points at `--insecure` — a self-signed certificate should not look like an unreachable host.
-
-An unreachable target is deliberately reported as code `2` (inconclusive), never as a clean `0`, so a host that never answered is not mistaken for a host with no vulnerabilities. The summary also prints a `Requests: <ok>/<total> succeeded` line so partial failures are visible.
-
-#### CI Example
-
-```bash
-python headerhawk.py https://example.com --quiet -o report.json
-if [ $? -eq 1 ]; then
-  echo "Header vulnerabilities detected — failing the build."
-  exit 1
-fi
-```
-
-### Examples
-
-#### Scan a List of Targets
+### Scan a whole estate
 
 ```bash
 python headerhawk.py --list targets.txt -o report.json
 ```
 
-#### Export SARIF for Code Scanning
-
-```bash
-python headerhawk.py https://example.com -o findings.sarif
-```
-
-#### Throttle to Avoid a WAF
-
-```bash
-python headerhawk.py http://example.com --threads 10 --rate 5
-```
-
-#### Route Everything Through Burp (raw bypasses included)
-
-```bash
-python headerhawk.py https://example.com --proxy http://127.0.0.1:8080 -k
-```
-
-#### Test Additional Methods
-
-```bash
-python headerhawk.py http://example.com --methods GET,POST
-```
-
-#### Send Custom Headers (e.g. Authentication)
-
-```bash
-python headerhawk.py http://example.com -H "Authorization: Bearer <token>" -H "Cookie: session=abc"
-```
-
-#### Scan a Request Saved from a Proxy
-
-```bash
-python headerhawk.py --request order.txt -o report.json
-```
-
-#### Replay a Saved Request Against Staging
-
-```bash
-python headerhawk.py https://staging.example.com/api/v2/orders --request order.txt
-```
-
-#### Confirm Blind SSRF via an OOB Listener
-
-```bash
-python headerhawk.py http://example.com --oob xxxx.oast.fun --oob-poll-url https://api.listener.example/export
-```
-
-#### Virtual Host Discovery with a Custom Wordlist
-
-```bash
-python headerhawk.py http://example.com -w internal-vhosts.txt
-```
-
-#### Full Command
-
-```bash
-python headerhawk.py http://example.com --threads 10 --timeout 8 --rate 20 --verbose 2 --output results.sarif --oob oob.example.com
-```
-
-### Interrupting the Program
-
-- Press `Ctrl+C` at any time to stop the execution gracefully; results collected so far are still written to `--output`.
+One run, one aggregated report, one summary, one exit code.
 
 ---
 
-## Output
+## In your pipeline
 
-The scan ends with a summary of every finding. Each finding reports:
+### Exit codes
 
-- **Test Type** — one of Host Header Injection, Host Header Bypass, Web Cache Poisoning, Auth Bypass, Virtual Host Discovery, SSRF, URL Parameter SSRF, Open Redirect or Blind SSRF (OOB).
-- **Severity** — High / Medium / Low.
-- **URL & HTTP Method** — the request that triggered the finding.
-- **Header / Parameter & Payload** — the manipulated header (or URL parameter) and the value used.
-- **Status Code & Response Time** — the observed response.
-- **Controls** — the security requirements the finding is evidence against.
-- **Analysis** — why it was flagged (reflection location, weighted SSRF signals, header anomalies, confirmed poisoning, OOB interaction, …).
-- **Reproduce** — a copy-paste command that reproduces the finding.
+| Code | Meaning |
+| ---- | ------- |
+| `0` | Scan completed, nothing gated on was found |
+| `1` | Findings in the classes selected by `--fail-on` |
+| `2` | The scan could not run — bad input, interrupted, or the target was unreachable |
 
-A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are always printed so coverage and reachability are visible.
+**An unreachable host exits `2`, never `0`.** A pipeline that treats "no findings" as success must not be handed a silent failure.
 
-### Sample Output
+### Fail on regressions, not forever
 
+```bash
+# Accept today's state
+python headerhawk.py https://app.example.com -o baseline.json
+
+# From now on, fail only on what is new
+python headerhawk.py https://app.example.com --baseline baseline.json \
+       --fail-on any --fail-on-new
 ```
-HeaderHawk 2.13.0
-GitHub: https://github.com/kabiri-labs/HeaderHawk
 
-Targets: 1
-Methods: GET
-Using 5 threads (timeout 10.0s, rate unlimited).
-Verbosity level set to 1.
+`--baseline` reports `N new, N fixed, N unchanged`. `--fail-on-new` narrows the gate to the new ones, so a team that has accepted its current findings gets a pipeline that fails on a **regression** instead of failing permanently — which is the difference between a gate that stays on and one that gets deleted.
 
-Target URL: http://example.com
-Original Host: example.com
+A finding keeps the same identity between runs even though several checks put a fresh random marker in every payload: marker-shaped tokens are folded out before matching. Without that, every finding would look new on every run.
 
-Starting Host Header Injection Testing...
-Host Header Injection Testing: 100%|████████████████████████| 76/76 [00:06<00:00, 12.1test/s]
+### PCI DSS 4.0.1 requirement 11.6.1
 
-[!] Host Header Injection Finding! [Medium]
-URL: http://example.com/
-Method: GET
-Header: X-Forwarded-Host
-Payload: 834503a3f66d.example-collab.com
-Status Code: 302
-Response Time: 0.01s
-Analysis: Injected host reflected in 'Location' header: https://834503a3f66d.example-collab.com/login Injected host reflected in response body (cache/link poisoning).
-Reproduce: curl -s -i -H 'X-Forwarded-Host: 834503a3f66d.example-collab.com' 'http://example.com/'
---------------------------------------------------------------------------------
+11.6.1 asks for a change- and tamper-detection mechanism that alerts on unauthorised modification of the security-impacting HTTP headers of payment pages, evaluated at least weekly (or at the frequency set by a targeted risk analysis). Running the baseline comparison on a schedule **is** that mechanism:
 
-========== Test Summary ==========
-Targets scanned: 1/1
-Requests: 512/512 succeeded (0 failed).
-Total findings: 1
-
---- Host Header Injection ---
-- [Medium] GET http://example.com/
-  Header/Parameter: X-Forwarded-Host
-  Payload: 834503a3f66d.example-collab.com
-  Analysis: Injected host reflected in 'Location' header: https://834503a3f66d.example-collab.com/login Injected host reflected in response body (cache/link poisoning).
---------------------------------------------------------------------------------
-===================================
+```bash
+python headerhawk.py https://shop.example/checkout \
+       --baseline last-week.json --fail-on-new \
+       --evidence pci-11.6.1.md -o this-week.json
 ```
+
+The evidence report marks 11.6.1 as assessed when a baseline was supplied and as **not assessed** when one was not. Detecting a change is the mechanism working, not the control failing.
+
+### GitHub code scanning
+
+```bash
+python headerhawk.py https://app.example.com -o headerhawk.sarif --fail-on vuln
+```
+
+Upload the SARIF with `github/codeql-action/upload-sarif`. Alerts carry the severity, the mapped requirement and a stable fingerprint, so they deduplicate across runs instead of reopening.
+
+### Staying under the radar
+
+`--rate 5` caps the entire scan — all threads plus the raw client — at a fixed requests-per-second budget, which is usually what it takes to survive a WAF. `--proxy http://127.0.0.1:8080` routes everything through an intercepting proxy including the raw bypass traffic, tunnelled with `CONNECT` so the malformed requests reach the target intact. `--insecure` genuinely disables TLS verification even when the environment sets `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE`, which otherwise silently override it.
+
+---
+
+## Installation
+
+Python **3.8+**, four dependencies, no services and no database.
+
+```bash
+git clone https://github.com/kabiri-labs/HeaderHawk.git
+cd HeaderHawk
+pip install -r requirements.txt
+python headerhawk.py https://example.com
+```
+
+`requests`, `urllib3`, `tqdm`, `colorama`. The test suite is fully offline — no network access required.
+
+---
+
+## Options
+
+### Target
+
+| Option | Purpose |
+| ------ | ------- |
+| `<target_url>` | The URL to scan. Required unless `--list` or `--request` is given |
+| `--list`, `-l` `<file>` | Scan every URL in a file, one per line (`#` comments ignored) |
+| `--request`, `-r` `<file>` | Drive the scan from a raw HTTP request saved from a browser or proxy |
+| `--request-scheme {http,https}` | Scheme for `--request` when the file has no absolute URL. Defaults to the scheme implied by a `:80`/`:443` port in `Host`, otherwise `https` |
+| `--discover` | Scan the endpoints the target publishes about itself |
+| `--max-endpoints <n>` | Cap for `--discover` (default 20) |
+| `--openapi <url>` | OpenAPI/Swagger description not at a standard path. Requires `--discover` |
+| `--methods <list>` | Comma-separated methods (default `GET`, or the method in `--request`) |
+| `--header`, `-H` `"Name: Value"` | Extra request header. Repeatable, and wins over `--request` |
+
+### Authentication
+
+| Option | Purpose |
+| ------ | ------- |
+| `--auth-cookie <cookies>` | Scan with these cookies, as `'a=1; b=2'`. Accepts `env:NAME` |
+| `--auth-login-url <url>` | Log in by submitting a form before scanning |
+| `--auth-login-data <body>` | Form body for the login. Accepts `env:NAME` |
+| `--auth-login-method <method>` | Method for the login request (default `POST`) |
+| `--auth-verify-text <text>` | Text that appears only when logged in — the scan stops if it is absent |
+| `--auth-verify-absent <text>` | Text that appears only when logged out. The inverse of the above |
+
+### Output and gating
+
+| Option | Purpose |
+| ------ | ------- |
+| `--output`, `-o` `<file>` | Report file; format from the extension (`.json`, `.md`, `.sarif`) |
+| `--evidence <file>` | Per-requirement compliance report (`.md` or `.json`) |
+| `--baseline <file>` | A previous scan's JSON; findings reported as new, fixed or unchanged |
+| `--fail-on-new` | Gate the exit code on findings absent from `--baseline`. Requires `--baseline` |
+| `--fail-on {vuln,posture,any,none}` | Which classes make the process exit `1` (default `vuln`) |
+| `--verbose {1,2}` | Level 2 also records non-findings for the report |
+| `--quiet`, `-q` | Strip progress bars and colour. Auto-enabled when stdout is not a TTY |
+
+### Network
+
+| Option | Purpose |
+| ------ | ------- |
+| `--threads <n>` | Concurrent threads, 1–20 (default 5) |
+| `--rate <n>` | Cap the whole scan at N requests/second (0 = unlimited) |
+| `--timeout <s>` | Per-request timeout (default 10) |
+| `--proxy <url>` | Upstream/intercepting proxy, raw traffic included. Supports `user:pass@` |
+| `--insecure`, `-k` | Disable TLS certificate verification |
+
+### Specialised
+
+| Option | Purpose |
+| ------ | ------- |
+| `--oob <domain>` | OOB/collaborator domain embedded in payloads for blind SSRF |
+| `--oob-poll-url <url>` | Listener export URL polled afterwards to confirm interactions |
+| `--wordlist`, `-w` `<file>` | Custom virtual-host wordlist |
+| `--enable-desync` | Confirm a suspected desync by planting a smuggled prefix. **Intrusive** — the prefix can attach to another user's request and corrupt or misroute live traffic. Without it, smuggling is reported from timing alone |
+
+`Ctrl+C` stops a run gracefully; results collected so far are still written to `--output` and `--evidence`.
 
 ---
 
@@ -601,15 +446,14 @@ Total findings: 1
 
 ### Project layout
 
-The scanner is a package; `headerhawk.py` at the repository root is only a thin
-entry point so `python headerhawk.py <target>` keeps working from a checkout.
+The scanner is a package; `headerhawk.py` at the repository root is a thin entry point so `python headerhawk.py <target>` keeps working from a checkout.
 
 ```
 headerhawk/
 ├── cli.py                 # argument parsing and scan orchestration
 ├── _meta.py               # tool name, version, project URL
 ├── compliance/            # control catalogue and finding -> control mapping
-├── core/                  # engine: session, pacing, stats, severity, OOB, output
+├── core/                  # engine: session, pacing, stats, severity, OOB, request files
 ├── net/raw.py             # raw HTTP/1.1 client, with timed byte-exact sends
 ├── discovery/             # endpoint sources and URL-shape collapsing
 ├── posture/               # response-side assessment
@@ -623,76 +467,30 @@ headerhawk/
 └── report/                # JSON, SARIF and Markdown rendering
 ```
 
-To add a detection module, subclass `BaseTest` in a new `checks/` module, give it
-a `test_type`, add that type to `SEVERITY_BY_TEST` in `core/severity.py`, and
-register the class in `checks/registry.py` — the CLI picks it up from there.
-Also give it an entry in `compliance/mapping.py` — an empty tuple is a valid
-answer, but the decision may not be skipped; a test enforces it.
+### Adding a detection module
 
-### Workflow
+Subclass `BaseTest` in a new `checks/` module, give it a `test_type`, add that type to `SEVERITY_BY_TEST` in `core/severity.py`, and register the class in `checks/registry.py`. Also give it an entry in `compliance/mapping.py` — an empty tuple is a valid answer, but **the decision may not be skipped**; a test enforces it.
 
-Contributions are welcome! Please follow these steps:
+### House rules
 
-1. **Fork the Repository**: Click the "Fork" button at the top-right corner of this page.
-2. **Clone Your Fork**: Clone your forked repository to your local machine.
+Two of them carry most of the weight:
 
-   ```bash
-   git clone https://github.com/your-username/HeaderHawk.git
-   ```
+1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 549 tests, fully offline.
+2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently; the evidence report prints that reason next to the requirements consequently left unassessed. A check that quietly returns nothing turns an unreachable target into a clean bill of health.
 
-3. **Create a Branch**: Create a new branch for your feature or bug fix.
-
-   ```bash
-   git checkout -b feat/YourFeature
-   ```
-
-4. **Make Changes**: Add your improvements or fixes, together with matching tests.
-
-5. **Run the Tests**: The unit tests are fully offline (no network access required).
-
-   ```bash
-   python -m unittest discover -s tests
-   ```
-
-6. **Commit Changes**: Commit your changes with a descriptive message.
-
-   ```bash
-   git commit -m "Add new detection module for X"
-   ```
-
-7. **Push to GitHub**: Push your changes to your forked repository.
-
-   ```bash
-   git push origin feat/YourFeature
-   ```
-
-8. **Open a Pull Request**: Navigate to the original repository and click on "New Pull Request".
-
-Please ensure your code adheres to the existing style, includes appropriate error handling, and keeps the test suite green.
+Fork, branch (`feat/…` or `fix/…`), keep the suite green, open a pull request.
 
 ---
 
 ## License
 
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
-
----
+MIT — see [LICENSE](LICENSE).
 
 ## Disclaimer
 
-**HeaderHawk** is intended for educational and authorized testing purposes only. Unauthorized use of this tool against systems without explicit permission is illegal and unethical. The developers assume no liability and are not responsible for any misuse or damage caused by this tool.
-
----
+HeaderHawk is intended for authorised testing only. Some checks send deliberately malformed requests, and `--enable-desync` can affect other users' traffic. Using it against systems you do not have explicit permission to test is illegal. The authors accept no liability for misuse.
 
 ## Contact
 
-For support or inquiries:
-
-- **Email**: [certification.kabiri@gmail.com](mailto:certification.kabiri@gmail.com)
-- **GitHub Issues**: [Create an Issue](https://github.com/kabiri-labs/HeaderHawk/issues)
-
-Feel free to open an issue or pull request for any bugs, feature requests, or questions.
-
----
-
-**Star this project** ⭐ if you find it useful!
+- **Email:** [certification.kabiri@gmail.com](mailto:certification.kabiri@gmail.com)
+- **Issues:** [github.com/kabiri-labs/HeaderHawk/issues](https://github.com/kabiri-labs/HeaderHawk/issues)

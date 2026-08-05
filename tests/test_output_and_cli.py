@@ -1,5 +1,6 @@
 """Tests for report writing, argument parsing and session construction."""
 
+import io
 import json
 import os
 import tempfile
@@ -87,6 +88,18 @@ class ParseArgumentsTests(unittest.TestCase):
                         ["prog", "http://t/", "-H", "A: 1", "-H", "B: 2"]):
             args = hhs.parse_arguments()
         self.assertEqual(args.headers, ["A: 1", "B: 2"])
+
+    def test_the_help_text_describes_both_sides_of_the_exchange(self):
+        # --help is the first description most people read, and for a while it
+        # advertised only the request side while half the checks assess the
+        # response. A stale summary there quietly misdescribes the tool.
+        with mock.patch("sys.argv", ["prog", "--help"]):
+            with self.assertRaises(SystemExit):
+                with mock.patch("sys.stdout", io.StringIO()) as out:
+                    hhs.parse_arguments()
+        text = out.getvalue().lower()
+        for phrase in ("request headers", "response headers", "compliance"):
+            self.assertIn(phrase, text, phrase)
 
 
 class BuildSessionTests(unittest.TestCase):
