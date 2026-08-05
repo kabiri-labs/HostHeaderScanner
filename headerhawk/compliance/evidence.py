@@ -14,6 +14,7 @@ check that covers it actually completed, and otherwise says why not.
 from collections import namedtuple
 from datetime import datetime, timezone
 
+from ..core.baseline import describe_drift
 from .catalogue import CONTROLS, describe
 from .mapping import controls_for
 
@@ -37,7 +38,15 @@ def controls_covered_by(check):
     return covered
 
 
-def build_evidence(tests, targets, stats=None, version=None, tool_name=None):
+# The requirement a baseline comparison satisfies. Running the comparison *is*
+# the change-detection mechanism 11.6.1 asks for, so performing it is what
+# passes: a detected change is the mechanism working, not the control failing.
+# The underlying weakness, if there is one, already fails its own 3.4.x control.
+DRIFT_CONTROL = "PCI-DSS-4.0.1:11.6.1"
+
+
+def build_evidence(tests, targets, stats=None, version=None, tool_name=None,
+                   drift=None):
     """Build the per-control evidence for one scan.
 
     ``tests`` are the check instances that ran, in any order. Every catalogued
@@ -64,6 +73,10 @@ def build_evidence(tests, targets, stats=None, version=None, tool_name=None):
             for control_id in finding.get("controls") or ():
                 findings_by_control.setdefault(control_id, []).append(finding)
 
+    if drift is not None:
+        assessed_by.setdefault(DRIFT_CONTROL, set()).add(
+            f"baseline comparison ({describe_drift(drift)})")
+
     results = []
     for control_id in sorted(CONTROLS):
         findings = findings_by_control.get(control_id, [])
@@ -77,6 +90,10 @@ def build_evidence(tests, targets, stats=None, version=None, tool_name=None):
             status = STATUS_PASS
         else:
             status = STATUS_NOT_ASSESSED
+            if control_id == DRIFT_CONTROL and not blocked:
+                blocked = {"baseline comparison":
+                           "no baseline was supplied, so no change detection "
+                           "was performed (pass --baseline <previous.json>)"}
         results.append(ControlResult(
             control=CONTROLS[control_id],
             status=status,

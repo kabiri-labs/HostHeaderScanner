@@ -119,12 +119,13 @@ def render_json(evidence, orphans=()):
     return json.dumps(payload, indent=2, default=str)
 
 
-def save_evidence(path, tests, targets, stats=None, version=None, tool_name=None):
+def save_evidence(path, tests, targets, stats=None, version=None,
+                  tool_name=None, drift=None):
     """Write the evidence report, choosing the format from the extension."""
     if not path:
         return
     evidence = build_evidence(tests, targets, stats=stats, version=version,
-                             tool_name=tool_name)
+                              tool_name=tool_name, drift=drift)
     orphans = unmapped_findings(tests)
     if path.rsplit(".", 1)[-1].lower() == "json":
         body = render_json(evidence, orphans)

@@ -13,6 +13,9 @@ from collections import namedtuple
 Control = namedtuple("Control", "id framework section title url")
 
 ASVS = "OWASP ASVS 5.0"
+PCI = "PCI DSS 4.0.1"
+_PCI_URL = ("https://docs-prv.pcisecuritystandards.org/PCI%20DSS/Standard/"
+            "PCI-DSS-v4_0_1.pdf")
 _ASVS_CHAPTER = "https://github.com/OWASP/ASVS/blob/master/5.0/en/{file}"
 _V3 = _ASVS_CHAPTER.format(file="0x12-V3-Web-Frontend-Security.md")
 _V4 = _ASVS_CHAPTER.format(file="0x13-V4-API-and-Web-Service.md")
@@ -130,6 +133,16 @@ _ENTRIES = [
         "Documentation and monitoring endpoints are not exposed unless "
         "explicitly intended.",
         _V13),
+    # The only PCI DSS requirement this scanner can speak to directly. 6.4.3
+    # (payment page script inventory and integrity) is deliberately absent:
+    # nothing here inventories scripts or checks their integrity, and a control
+    # that could only ever read "not assessed" is noise in an evidence report.
+    Control(
+        "PCI-DSS-4.0.1:11.6.1", PCI, "11.6.1",
+        "A change- and tamper-detection mechanism alerts on unauthorised "
+        "modification of the security-impacting HTTP headers and script "
+        "content of payment pages.",
+        _PCI_URL),
 ]
 
 CONTROLS = {control.id: control for control in _ENTRIES}

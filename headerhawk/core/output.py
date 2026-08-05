@@ -2,6 +2,7 @@
 
 from colorama import Fore, Style
 
+from .baseline import describe_drift
 from .findings import CLASS_POSTURE, CLASS_VULNERABILITY, count_by_class
 
 # Suppresses progress/status chatter (set from --quiet / non-TTY detection).
@@ -37,7 +38,7 @@ def is_quiet():
     return _QUIET
 
 
-def print_summary(all_tests, targets, stats):
+def print_summary(all_tests, targets, stats, drift=None):
     """Print the aggregate summary and return the total finding count."""
     total_vulns = sum(len(test.vulnerabilities_found) for test in all_tests)
     scanned = len({test.target_url for test in all_tests})
@@ -49,6 +50,8 @@ def print_summary(all_tests, targets, stats):
     print(Fore.CYAN + f"Total findings: {total_vulns} "
           f"({counts.get(CLASS_VULNERABILITY, 0)} vulnerability, "
           f"{counts.get(CLASS_POSTURE, 0)} posture)")
+    if drift is not None:
+        print(Fore.CYAN + f"Against baseline: {describe_drift(drift)}")
 
     by_type = {}
     for test in all_tests:
