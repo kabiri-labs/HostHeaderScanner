@@ -14,6 +14,8 @@ SEVERITY_BY_TEST = {
     "Blind SSRF (OOB)": "High",
     # CORS. A permissive allowlist is downgraded per finding when the endpoint
     # does not allow credentials.
+    "CRLF Response Splitting": "High",
+    "CRLF Header Injection": "High",
     "HTTP Request Smuggling (CL.TE)": "High",
     "HTTP Request Smuggling (TE.CL)": "High",
     "CORS Origin Reflection": "High",
