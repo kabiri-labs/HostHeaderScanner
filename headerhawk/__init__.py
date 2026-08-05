@@ -19,11 +19,12 @@ from .checks.open_redirect import OpenRedirectTest
 from .checks.registry import CHECKS, finding_types
 from .checks.smuggling import RequestSmugglingTest
 from .checks.ssrf import SSRFTest
+from .checks.unkeyed import UnkeyedInputTest
 from .checks.url_param import URLParameterTest
 from .checks.vhost import VhostDiscoveryTest
 from .checks.wordlists import (CACHE_STATUS_HEADERS, DEFAULT_VHOST_WORDLIST,
-                               HOST_HEADERS, PATH_OVERRIDE_HEADERS,
-                               UNKEYED_HOST_HEADERS)
+                               HOST_HEADERS, INTERMEDIARY_HEADERS,
+                               PATH_OVERRIDE_HEADERS, UNKEYED_HOST_HEADERS)
 from .cli import (load_targets, load_wordlist, main, parse_arguments,
                   parse_headers, scan_target)
 from .compliance import (CONTROLS, CONTROLS_BY_TEST, STATUS_FAIL,
@@ -67,14 +68,14 @@ __all__ = [
     "__github_url__", "__tool_name__", "__version__",
     "AuthBypassTest", "BaseTest", "CachePoisoningTest", "CORSTest", "CRLFInjectionTest",
     "HostBypassTest",
-    "HostInjectionTest", "OpenRedirectTest", "SSRFTest", "URLParameterTest",
+    "HostInjectionTest", "OpenRedirectTest", "SSRFTest", "URLParameterTest", "UnkeyedInputTest",
     "VhostDiscoveryTest", "RequestSmugglingTest", "CHECKS", "finding_types",
     "ResponseHeaderPostureTest", "PostureRule", "RULES", "Issue",
     "Cookie", "ResponseFacts", "parse_set_cookie", "set_cookie_values",
     "CLASS_POSTURE", "CLASS_VULNERABILITY", "count_by_class",
     "finding_class_of", "gated_finding_count",
     "CACHE_STATUS_HEADERS", "DEFAULT_VHOST_WORDLIST", "HOST_HEADERS",
-    "PATH_OVERRIDE_HEADERS", "UNKEYED_HOST_HEADERS",
+    "PATH_OVERRIDE_HEADERS", "UNKEYED_HOST_HEADERS", "INTERMEDIARY_HEADERS",
     "load_targets", "load_wordlist", "main", "parse_arguments",
     "parse_headers", "scan_target",
     "CONTROLS", "CONTROLS_BY_TEST", "Control", "ControlResult",

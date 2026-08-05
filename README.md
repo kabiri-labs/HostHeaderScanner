@@ -1,6 +1,6 @@
-# HeaderHawk v2.10.0
+# HeaderHawk v2.11.0
 
-[![Version](https://img.shields.io/badge/version-2.10.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.11.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
@@ -42,6 +42,7 @@ Each module targets a distinct class of header-driven weakness and the headers/v
 | **Host header injection** (cache / password-reset / link poisoning) | `Host`, `X-Forwarded-Host`, `X-Forwarded-Server`, `X-Host`, `X-Original-Host`, `X-HTTP-Host-Override`, `Forwarded`, `Base-Url`, and 10+ more routing headers — reflection of a unique marker in body, `Location` or any response header |
 | **Host validation bypass** | Duplicate `Host` headers, absolute-URI request lines, indented (line-folded) headers, host overrides — sent with a raw HTTP/1.1 client |
 | **Confirmed web cache poisoning** | Unkeyed headers (`X-Forwarded-Host`, `X-Host`, `X-Original-Host`, `Base-Url`, …) with a cache-buster and a clean re-request that proves the poisoned response is served |
+| **Unkeyed input discovery** | 90+ intermediary-set header fields searched by bisection — `X-Forwarded-Scheme`, `CDN-Loop`, `X-Envoy-Original-Path`, `X-Wap-Profile` and the rest — so a cache hole is found rather than guessed |
 | **Access-control bypass** | Internal `Host` / `X-Forwarded-For` / `X-Real-IP` / `True-Client-IP` values against 401/403 endpoints, plus path-override headers `X-Original-URL` / `X-Rewrite-URL` |
 | **SSRF via routing headers** | `Host`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-IP`, `Forwarded` pointed at internal hosts and cloud metadata endpoints |
 | **Blind SSRF (out-of-band)** | Per-scan correlation id embedded in payloads, confirmed by polling your listener |
@@ -64,7 +65,7 @@ a report answers *which requirement does this fail?* without a manual crosswalk.
 
 | Finding | Controls |
 | ------- | -------- |
-| Host header injection / bypass, web cache poisoning | ASVS 5.0 **4.1.3** — an HTTP header field set by an intermediary layer cannot be overridden by the end user |
+| Host header injection / bypass, web cache poisoning, unkeyed input | ASVS 5.0 **4.1.3** — an HTTP header field set by an intermediary layer cannot be overridden by the end user |
 | Access-control bypass | ASVS 5.0 **4.1.3**, **8.3.1** — authorization enforced at a trusted service layer |
 | SSRF, URL-parameter SSRF, blind SSRF | ASVS 5.0 **13.2.4**, **13.2.5** — allowlist of systems the application and server may call |
 | Open redirect | ASVS 5.0 **3.7.2** — redirects to another hostname only to allowlisted destinations |
@@ -238,6 +239,7 @@ a change is the mechanism working, not the control failing.
 
 - **Unique-marker reflection**: injects a random per-request marker so a reflected Host is a high-confidence finding, not a guess — across `Host`, `X-Forwarded-Host`, `Forwarded` and 15+ other headers, checked in the body, the `Location` header and every response header.
 - **Raw HTTP/1.1 client**: a purpose-built client (not `requests`) sends malformed requests verbatim — duplicate `Host` headers, absolute-URI request lines, line-folded headers — the building blocks of most Host validation bypasses.
+- **Unkeyed inputs found by search, not by guesswork**: 90+ header fields a load balancer, proxy or CDN sets are sent in batches, and a batch that moves the response is bisected until the header responsible is isolated. Ruling out the whole list costs **one request**; finding one header among ninety costs about a dozen. Every probe carries its own cache-buster, because otherwise a cache in front of the target answers the entire search with the first response it stored.
 - **Confirmed cache poisoning, not just reflection**: a cache-buster is planted, the poisoning request is sent through an unkeyed header, and the URL is re-requested *without* it; only a surviving marker (served from cache) is reported, with `X-Cache` / `Age` / `CF-Cache-Status` context.
 - **Weighted SSRF scoring**: response-time deviation, internal-target indicators (`root:x:0:0:`, cloud-metadata markers, connection errors) and header anomalies are combined behind a threshold. Header anomalies are measured only against headers proven stable across baseline samples, so per-request identifiers (request ids, tracing, `CF-RAY`, nonces) are learned as volatile and ignored.
 - **Confirmed virtual-host discovery**: the default vhost is sampled repeatedly to learn its natural page-to-page variance; a candidate is reported only when a status, length or title difference is confirmed on a second probe — dynamic content does not masquerade as a hidden host.
@@ -463,7 +465,7 @@ A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are alwa
 ### Sample Output
 
 ```
-HeaderHawk 2.10.0
+HeaderHawk 2.11.0
 GitHub: https://github.com/kabiri-labs/HeaderHawk
 
 Targets: 1

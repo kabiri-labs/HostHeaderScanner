@@ -15,6 +15,7 @@ from .host_injection import HostInjectionTest
 from .open_redirect import OpenRedirectTest
 from .smuggling import RequestSmugglingTest
 from .ssrf import SSRFTest
+from .unkeyed import UnkeyedInputTest
 from .url_param import URLParameterTest
 from .vhost import VhostDiscoveryTest
 
@@ -25,6 +26,7 @@ CHECKS = [
     HostInjectionTest,
     HostBypassTest,
     CachePoisoningTest,
+    UnkeyedInputTest,
     CORSTest,
     CRLFInjectionTest,
     AuthBypassTest,
