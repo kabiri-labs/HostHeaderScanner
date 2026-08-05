@@ -8,6 +8,7 @@ from tqdm import tqdm
 
 from ..compliance import controls_for
 from ..core.findings import DEFAULT_FINDING_CLASS
+from ..core.scope import SCOPE_ENDPOINT
 from ..core.severity import severity_for
 from ..report.repro import build_reproduction
 
@@ -18,6 +19,13 @@ class BaseTest:
     test_type = "Base"
     # Findings default to the vulnerability class; posture checks override it.
     finding_class = DEFAULT_FINDING_CLASS
+    # Most weaknesses live on the endpoint: header posture, CORS policy and
+    # access control all vary by route. A few live on the host instead - a
+    # front-end that mis-parses Host, or that desyncs from its back-end, does so
+    # for every route at once. Running those once per discovered endpoint would
+    # repeat identical work and file identical findings, so discovery runs them
+    # against the requested target only.
+    scope = SCOPE_ENDPOINT
 
     @classmethod
     def emitted_types(cls):

@@ -1,6 +1,6 @@
-# HeaderHawk v2.9.0
+# HeaderHawk v2.10.0
 
-[![Version](https://img.shields.io/badge/version-2.9.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.10.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
@@ -15,6 +15,7 @@ Its focus is **signal over noise**. Findings are driven by evidence — unique p
 
 - [Detection Coverage](#detection-coverage)
 - [Control Mapping](#control-mapping)
+- [Endpoint Discovery](#endpoint-discovery)
 - [Authenticated Scanning](#authenticated-scanning)
 - [Compliance Evidence](#compliance-evidence)
 - [Features](#features)
@@ -85,6 +86,48 @@ reported as unmapped rather than attached to an approximate requirement — an i
 that does not hold up under review is worse than an empty column. `Permissions-Policy`
 is the current example: ASVS 5.0 has no requirement for it, so it is reported
 without one.
+
+---
+
+## Endpoint Discovery
+
+A product is not one URL. Header posture varies by route — the login page, the
+API and the static assets rarely carry the same policy — so assessing only the
+URL you typed answers a narrower question than the one being asked.
+
+```bash
+python headerhawk.py https://app.example.com/ --discover --max-endpoints 20
+```
+
+`--discover` reads what the target already publishes about itself: an
+**OpenAPI/Swagger** description, **sitemap.xml** (following a sitemap index one
+level), **robots.txt**, and the **same-origin links** on the page itself.
+Nothing is guessed or brute-forced — a scan that invents paths spends its budget
+on 404s.
+
+### URLs that are the same endpoint collapse
+
+`/order/1041`, `/order/1042` and `/order/1043` are three URLs, one endpoint, one
+set of response headers and one place a fix would go. Identifier-looking path
+segments become placeholders and a query string reduces to its parameter names,
+so `/search?q=hats` and `/search?q=shoes` also count once. Without that, a
+paginated site spends the entire budget on a single route.
+
+The URL you asked for always comes first and is never displaced. When more
+endpoints are found than `--max-endpoints` allows, the run says so rather than
+implying the product was that small.
+
+### Some checks belong to the host, not the route
+
+| Scope | Checks |
+| ----- | ------ |
+| Endpoint | response header posture, CSP, cookies, Host header injection, cache poisoning, CORS, CRLF injection, access-control bypass, URL-parameter SSRF, open redirect |
+| Host | virtual host discovery, Host validation bypass, SSRF via routing headers, request smuggling |
+
+A front-end that mis-parses `Host`, or that desyncs from its back-end, does so
+for every route at once. Running those per endpoint would issue identical
+requests and file identical findings, so they run against the requested target
+only — the cost of a scan is `4 + 8×N` checks rather than `12×N`.
 
 ---
 
@@ -206,6 +249,7 @@ a change is the mechanism working, not the control failing.
 
 ### Engine, workflow & reporting
 
+- **Endpoint discovery that stays bounded**: reads the target's own OpenAPI, sitemap, robots.txt and links, collapses URLs that are the same endpoint, and keeps a fixed number — with host-level checks running once rather than once per route. See [Endpoint Discovery](#endpoint-discovery).
 - **Authenticated scanning that checks itself**: log in by cookie or form, and the session is verified before *and* after the scan — an unauthenticated run is never reported as an authenticated one. See [Authenticated Scanning](#authenticated-scanning).
 - **Evidence report by requirement**: `--evidence` answers *did this product meet each requirement, and how do you know?* — and never reports a requirement as met when the scan could not judge it. See [Compliance Evidence](#compliance-evidence).
 - **Control-mapped findings**: each finding cites the OWASP ASVS 5.0 requirements it is evidence against, in every report format — see [Control Mapping](#control-mapping).
@@ -281,6 +325,9 @@ python headerhawk.py http://example.com
 - `--enable-desync`: Confirm a suspected request-smuggling desync by planting a smuggled prefix and checking whether a following request comes back affected. **Intrusive** — see the warning below. Off by default; without it, smuggling is reported from timing alone.
 - `--fail-on <vuln|posture|any|none>`: Which findings make the process exit `1`. Default `vuln` — only proven vulnerabilities. `posture` counts missing response-header controls, `any` counts both, `none` never fails on findings (report-only runs).
 - `--quiet` or `-q`: Suppress progress bars, colours and status chatter (only findings and the final summary are printed). Auto-enabled when stdout is not a TTY, so piped/CI logs stay clean.
+- `--discover`: Scan the endpoints the target publishes about itself, instead of only the URL given. See [Endpoint Discovery](#endpoint-discovery).
+- `--max-endpoints <n>`: Most endpoints to scan when discovering (default 20).
+- `--openapi <url>`: URL of an OpenAPI/Swagger description, when it is not at a standard path. Requires `--discover`.
 - `--auth-cookie <cookies>`: Scan with these cookies, as `'a=1; b=2'`. Accepts `env:NAME`.
 - `--auth-login-url <url>` / `--auth-login-data <body>` / `--auth-login-method <method>`: Log in by submitting a form before scanning. The body accepts `env:NAME`.
 - `--auth-verify-text <text>` / `--auth-verify-absent <text>`: What a logged-in (or logged-out) page contains. The scan stops rather than report an unauthenticated run as an authenticated one. See [Authenticated Scanning](#authenticated-scanning).
@@ -416,7 +463,7 @@ A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are alwa
 ### Sample Output
 
 ```
-HeaderHawk 2.9.0
+HeaderHawk 2.10.0
 GitHub: https://github.com/kabiri-labs/HeaderHawk
 
 Targets: 1
@@ -471,6 +518,7 @@ headerhawk/
 ├── compliance/            # control catalogue and finding -> control mapping
 ├── core/                  # engine: session, pacing, stats, severity, OOB, output
 ├── net/raw.py             # raw HTTP/1.1 client, with timed byte-exact sends
+├── discovery/             # endpoint sources and URL-shape collapsing
 ├── posture/               # response-side assessment
 │   ├── facts.py           # the response view a rule is given
 │   ├── rules.py           # header and CSP rules

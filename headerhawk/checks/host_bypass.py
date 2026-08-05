@@ -5,7 +5,9 @@ from urllib.parse import urlparse
 
 from .._meta import __tool_name__, __version__
 from ..net.raw import RawHTTPClient
+from ..core.scope import SCOPE_HOST
 from .base import BaseTest
+
 
 class HostBypassTest(BaseTest):
     """Host header validation bypasses that require raw, un-normalised HTTP.
@@ -16,6 +18,8 @@ class HostBypassTest(BaseTest):
     """
 
     test_type = "Host Header Bypass"
+    # Host-level: the weakness belongs to the front-end, not to a route.
+    scope = SCOPE_HOST
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
