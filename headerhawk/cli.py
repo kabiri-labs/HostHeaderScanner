@@ -17,6 +17,7 @@ from .core.findings import DEFAULT_FAIL_ON, FAIL_ON_CLASSES, gated_finding_count
 from .core.oob import OOBManager, confirm_oob_interactions
 from .core.output import is_quiet, print_summary, resolve_quiet, set_quiet, status
 from .core.ratelimit import RateLimiter
+from .core.request_file import RequestFileError, load_request
 from .core.session import build_session
 from .core.scope import runs_on
 from .core.stats import RequestStats
@@ -41,10 +42,21 @@ def parse_arguments():
         description="HeaderHawk - scan HTTP request headers for injection, "
                     "SSRF, cache poisoning and access-control bypass bugs.")
     parser.add_argument("url", nargs="?",
-                        help="Target URL (omit when using --list)")
+                        help="Target URL (omit when using --list or --request)")
     parser.add_argument("--list", "-l", dest="list",
                         help="File of target URLs to scan, one per line "
                              "(blank lines and '#' comments are ignored)")
+    parser.add_argument("--request", "-r",
+                        help="File holding a raw HTTP request, as saved from a "
+                             "browser or an intercepting proxy. Its URL, "
+                             "method, headers and body drive the scan; each "
+                             "check still replaces the header it is testing and "
+                             "adds it when the file does not carry it")
+    parser.add_argument("--request-scheme", dest="request_scheme",
+                        choices=["http", "https"],
+                        help="Scheme for --request when the file has no "
+                             "absolute URL (default: inferred from a port in "
+                             "the Host header, otherwise https)")
     parser.add_argument("--oob", help="OOB/collaborator domain for SSRF correlation")
     parser.add_argument("--oob-poll-url", dest="oob_poll_url",
                         help="Listener export URL polled afterwards to confirm OOB hits")
@@ -55,8 +67,9 @@ def parse_arguments():
                         help="Max requests per second across all threads "
                              "(0 = unlimited; use a low value to avoid WAF/rate blocks)")
     parser.add_argument("--timeout", type=float, default=10, help="Per-request timeout in seconds")
-    parser.add_argument("--methods", default="GET",
-                        help="Comma-separated HTTP methods (e.g. GET,POST)")
+    parser.add_argument("--methods", default=None,
+                        help="Comma-separated HTTP methods (e.g. GET,POST). "
+                             "Defaults to GET, or to the method in --request")
     parser.add_argument("--header", "-H", action="append", dest="headers",
                         help="Extra request header 'Name: Value' (repeatable)")
     parser.add_argument("--proxy", help="Proxy URL (e.g. http://127.0.0.1:8080)")
@@ -134,8 +147,10 @@ def parse_arguments():
         parser.error("The --threads argument must be between 1 and 20.")
     if args.rate < 0:
         parser.error("The --rate argument must be 0 (unlimited) or positive.")
-    if not args.url and not args.list:
-        parser.error("Provide a target URL or --list <file>.")
+    if not args.url and not args.list and not args.request:
+        parser.error("Provide a target URL, --list <file> or --request <file>.")
+    if args.request_scheme and not args.request:
+        parser.error("--request-scheme only applies with --request.")
     if args.fail_on_new and not args.baseline:
         parser.error("--fail-on-new needs --baseline <file> to compare against.")
     if args.max_endpoints < 1:
@@ -158,6 +173,25 @@ def load_wordlist(path):
         return None
 
 
+def resolve_request(args):
+    """Load --request, if given, and let it fill in the URL and the method.
+
+    A malformed file stops the scan rather than being skipped: continuing would
+    silently test a bare URL, dropping the session cookie and the body that were
+    the reason for supplying a request in the first place.
+    """
+    if not args.request:
+        return None
+    spec = load_request(args.request, scheme=args.request_scheme)
+    if not args.url and not args.list:
+        args.url = spec.url
+    if not args.methods:
+        # The file describes one exchange; testing it with a method it never
+        # used would be asking the endpoint a different question.
+        args.methods = spec.method
+    return spec
+
+
 def load_targets(args):
     """Resolve the target URLs from --list (a file) or the positional argument."""
     if args.list:
@@ -170,7 +204,7 @@ def load_targets(args):
 
 
 def scan_target(url, args, session, methods, wordlist, stats,
-                rate_limiter=None, primary=True):
+                rate_limiter=None, primary=True, request_spec=None):
     """Run every test against a single URL and return the test objects.
 
     Returns None for an invalid URL so a batch run can skip it and continue.
@@ -190,7 +224,7 @@ def scan_target(url, args, session, methods, wordlist, stats,
                   threads=args.threads, verbose=args.verbose, timeout=args.timeout,
                   oob_manager=oob_manager, wordlist=wordlist, insecure=args.insecure,
                   stats=stats, quiet=is_quiet(), rate_limiter=rate_limiter,
-                  enable_desync=args.enable_desync)
+                  enable_desync=args.enable_desync, request_spec=request_spec)
     # Host-level checks run against the requested target only; every other URL
     # in the scan is another route on the same host, and repeating them there
     # would issue identical requests and file identical findings.
@@ -264,12 +298,30 @@ def main():
     status(Fore.CYAN + Style.BRIGHT + f"{__tool_name__} {__version__}")
     status(Fore.CYAN + f"GitHub: {__github_url__}\n")
 
+    try:
+        request_spec = resolve_request(args)
+    except RequestFileError as exc:
+        print(Fore.RED + Style.BRIGHT + f"\n[!] --request could not be used: {exc}")
+        return EXIT_ERROR
+
     targets = load_targets(args)
-    methods = [m.strip().upper() for m in args.methods.split(",") if m.strip()]
-    extra_headers = parse_headers(args.headers)
+    methods = [m.strip().upper() for m in (args.methods or "GET").split(",")
+               if m.strip()]
+    # The file's headers ride on the session, so a check that sets a header of
+    # the same name replaces it and one that sets a new name adds it - which is
+    # exactly what per-request headers do to session headers in ``requests``.
+    # An explicit -H still wins, being the more specific instruction.
+    extra_headers = dict(request_spec.headers) if request_spec else {}
+    extra_headers.update(parse_headers(args.headers))
     wordlist = load_wordlist(args.wordlist)
 
     rate_note = f"{args.rate:g} req/s" if args.rate > 0 else "unlimited"
+    if request_spec:
+        body_note = (f"{len(request_spec.body)}-byte body"
+                     if request_spec.body else "no body")
+        status(Fore.CYAN + f"Request file: {args.request} "
+                           f"({request_spec.method} {request_spec.url}, "
+                           f"{len(request_spec.headers)} header(s), {body_note})")
     status(f"Targets: {len(targets)}")
     status(f"Methods: {', '.join(methods)}")
     status(f"Using {args.threads} threads (timeout {args.timeout}s, rate {rate_note}).")
@@ -322,7 +374,8 @@ def main():
                 status(Fore.CYAN + Style.BRIGHT + f"\n===== Scanning {url} =====")
             tests = scan_target(url, args, session, methods, wordlist, stats,
                                 rate_limiter=rate_limiter,
-                                primary=(url == targets[0]))
+                                primary=(url == targets[0]),
+                                request_spec=request_spec)
             if tests:
                 all_tests.extend(tests)
     except KeyboardInterrupt:

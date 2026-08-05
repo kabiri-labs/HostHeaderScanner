@@ -27,7 +27,7 @@ from .checks.wordlists import (CACHE_STATUS_HEADERS, DEFAULT_VHOST_WORDLIST,
                                HOST_HEADERS, INTERMEDIARY_HEADERS,
                                PATH_OVERRIDE_HEADERS, UNKEYED_HOST_HEADERS)
 from .cli import (load_targets, load_wordlist, main, parse_arguments,
-                  parse_headers, scan_target)
+                  parse_headers, resolve_request, scan_target)
 from .compliance import (CONTROLS, CONTROLS_BY_TEST, STATUS_FAIL,
                          STATUS_NOT_ASSESSED, STATUS_PASS, Control,
                          ControlResult, build_evidence,
@@ -50,6 +50,11 @@ from .core.oob import OOBManager, confirm_oob_interactions
 from .core.output import (is_quiet, print_summary, resolve_quiet, set_quiet,
                           status)
 from .core.ratelimit import RateLimiter
+from .core.request_file import (CREDENTIAL_HEADERS, EXCLUDED_HEADERS,
+                                REDACTED, RequestFileError, RequestSpec,
+                                header_lines, is_credential_header,
+                                load_request, parse_request,
+                                redact_credentials)
 from .core.session import build_session
 from .core.severity import (DEFAULT_SEVERITY, SEVERITY_BY_TEST, SEVERITY_META,
                             severity_for)
@@ -78,7 +83,11 @@ __all__ = [
     "CACHE_STATUS_HEADERS", "DEFAULT_VHOST_WORDLIST", "HOST_HEADERS",
     "PATH_OVERRIDE_HEADERS", "UNKEYED_HOST_HEADERS", "INTERMEDIARY_HEADERS",
     "load_targets", "load_wordlist", "main", "parse_arguments",
-    "parse_headers", "scan_target",
+    "parse_headers", "scan_target", "resolve_request",
+    "CREDENTIAL_HEADERS", "EXCLUDED_HEADERS", "REDACTED",
+    "RequestFileError", "RequestSpec", "header_lines",
+    "is_credential_header", "load_request", "parse_request",
+    "redact_credentials",
     "CONTROLS", "CONTROLS_BY_TEST", "Control", "ControlResult",
     "STATUS_FAIL", "STATUS_NOT_ASSESSED", "STATUS_PASS",
     "build_evidence", "controls_covered_by", "controls_for", "describe",

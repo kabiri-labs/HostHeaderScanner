@@ -30,7 +30,7 @@ class _Target:
         self._responder = responder
 
     def request(self, method, url=None, headers=None, timeout=None,
-                allow_redirects=True):
+                allow_redirects=True, data=None, **kwargs):
         self.calls.append({"url": url, "headers": dict(headers or {})})
         return self._responder(url, headers or {})
 

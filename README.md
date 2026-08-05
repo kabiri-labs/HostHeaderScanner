@@ -1,6 +1,6 @@
-# HeaderHawk v2.12.0
+# HeaderHawk v2.13.0
 
-[![Version](https://img.shields.io/badge/version-2.12.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.13.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
@@ -17,6 +17,7 @@ Its focus is **signal over noise**. Findings are driven by evidence — unique p
 - [Control Mapping](#control-mapping)
 - [Endpoint Discovery](#endpoint-discovery)
 - [Authenticated Scanning](#authenticated-scanning)
+- [Scanning a Saved Request](#scanning-a-saved-request)
 - [Compliance Evidence](#compliance-evidence)
 - [Features](#features)
 - [Installation](#installation)
@@ -173,6 +174,78 @@ or its login page decides what every other line means.
 
 ---
 
+## Scanning a Saved Request
+
+Real requests are rarely a bare URL. The one worth testing carries a session
+cookie, a bearer token, a CSRF token, a content type, a JSON body and a dozen
+headers a proxy or a single-page app added along the way. Reconstructing that on
+the command line with a stack of `-H` flags is tedious and easy to get wrong.
+
+Save the request from your browser's dev tools or an intercepting proxy and hand
+the file over:
+
+```bash
+python headerhawk.py --request order.txt
+```
+
+```http
+POST /api/v2/orders?page=2 HTTP/1.1
+Host: shop.example
+User-Agent: Mozilla/5.0
+Content-Type: application/json
+Cookie: session=abc123; theme=dark
+Authorization: Bearer t0ken
+X-Csrf-Token: csrf-9f2
+Content-Length: 17
+
+{"quantity": 100}
+```
+
+The file supplies the target URL, the method and the body, so `<target_url>` and
+`--methods` become optional. Give an explicit URL to replay the same request
+against another host (staging, a second region); an explicit `--methods` or `-H`
+also wins over the file.
+
+### The file is a starting point, not a fixed request
+
+Every check still sets the header it is testing:
+
+- **The file already carries that header** — the check's value **replaces** it,
+  so the request goes out with one value, not two.
+- **The file does not carry it** — the check **adds** it, and everything else in
+  the file rides along unchanged.
+
+That is exactly how a per-request header meets a session header in `requests`,
+so it holds for the socket-level checks too: the raw Host-bypass and smuggling
+probes are written from the file's header block rather than from four defaults,
+and a bypass is therefore tested as the authenticated request it really is.
+
+### What is deliberately not carried over
+
+| Field | Why |
+| ----- | --- |
+| `Host` | It decides the target rather than travelling as a header. Pinning the file's value would neutralise **every** Host-manipulation check — the payload and the real `Host` would both be sent, and the real one would win. |
+| `Content-Length`, `Transfer-Encoding` | They describe the saved transmission. The smuggling probes' whole subject is a disagreement between these two, so a value from the file would describe a different message. |
+| `Connection`, `Keep-Alive`, `Upgrade`, `Proxy-Connection`, `Expect` | Connection management for one particular hop, not for the requests being made now. |
+
+The body is replayed **only on the method the file used**. A saved `POST` body
+sent on a `GET` would be a different request from the one you captured, and on
+some endpoints a destructive one.
+
+### Scheme
+
+An absolute-URI request line (`GET https://shop.example/x HTTP/1.1`) is honoured
+as written. Otherwise the scheme comes from `--request-scheme {http,https}`,
+then from a `:80`/`:443` port in the `Host` header, and finally defaults to
+**HTTPS** — guessing plaintext for a request that carried a session cookie would
+be the more dangerous default.
+
+A file that cannot be parsed **stops the scan** rather than being skipped:
+continuing would quietly test a bare URL without the cookie and the body that
+were the reason for supplying a request in the first place.
+
+---
+
 ## Compliance Evidence
 
 `--evidence report.md` (or `.json`) writes a report keyed by **requirement**
@@ -256,6 +329,7 @@ a change is the mechanism working, not the control failing.
 
 - **Endpoint discovery that stays bounded**: reads the target's own OpenAPI, sitemap, robots.txt and links, collapses URLs that are the same endpoint, and keeps a fixed number — with host-level checks running once rather than once per route. See [Endpoint Discovery](#endpoint-discovery).
 - **Authenticated scanning that checks itself**: log in by cookie or form, and the session is verified before *and* after the scan — an unauthenticated run is never reported as an authenticated one. See [Authenticated Scanning](#authenticated-scanning).
+- **Scan the request you actually captured**: `--request` takes a raw HTTP request saved from a browser or an intercepting proxy — cookies, tokens, content type and body intact — and every check replaces the header it is testing or adds it when absent, right down to the raw-socket probes. See [Scanning a Saved Request](#scanning-a-saved-request).
 - **Evidence report by requirement**: `--evidence` answers *did this product meet each requirement, and how do you know?* — and never reports a requirement as met when the scan could not judge it. See [Compliance Evidence](#compliance-evidence).
 - **Control-mapped findings**: each finding cites the OWASP ASVS 5.0 requirements it is evidence against, in every report format — see [Control Mapping](#control-mapping).
 - **Severity-rated findings**: every finding carries a severity band (High / Medium / Low), shown in the summary and in every report format for quick triage.
@@ -314,15 +388,17 @@ python headerhawk.py http://example.com
 
 ### Options
 
-- `<target_url>`: The target URL to scan. Required unless `--list` is given.
+- `<target_url>`: The target URL to scan. Required unless `--list` or `--request` is given.
 - `--list <file>` or `-l`: Scan every URL in a file (one per line; blank lines and `#` comments are ignored). Findings from all targets are aggregated into one report.
+- `--request <file>` or `-r`: Drive the scan from a raw HTTP request saved from a browser or an intercepting proxy. Its URL, method, headers and body are used; each check still replaces the header it is testing, and adds it when the file does not carry one. See [Scanning a Saved Request](#scanning-a-saved-request).
+- `--request-scheme <http|https>`: Scheme for `--request` when the file has no absolute URL. Defaults to the scheme implied by a `:80`/`:443` port in `Host`, otherwise `https`. Requires `--request`.
 - `--oob <domain>`: Out-of-Band (OOB) domain embedded into payloads for SSRF correlation.
 - `--oob-poll-url <url>`: Listener export URL polled after the scan to confirm OOB interactions.
 - `--wordlist <file>` or `-w`: Custom virtual-host wordlist for discovery (one name per line).
 - `--threads <number>`: Number of concurrent threads (default `5`). Must be between 1 and 20.
 - `--rate N`: Cap the whole scan (all threads combined, including raw-HTTP bypass traffic) at `N` requests per second. Default `0` means unlimited; set a low value (e.g. `5`) to stay under WAF or rate-based blocking.
 - `--timeout <seconds>`: Per-request timeout in seconds (default `10`).
-- `--methods <list>`: Comma-separated HTTP methods to test (default `GET`, e.g. `GET,POST`).
+- `--methods <list>`: Comma-separated HTTP methods to test (default `GET`, or the method in `--request`; e.g. `GET,POST`).
 - `--header <"Name: Value">` or `-H`: Add a custom request header. Repeatable.
 - `--proxy <url>`: Route traffic through an upstream proxy (e.g. `http://127.0.0.1:8080`), including the raw-HTTP bypass tests, which are tunnelled via `CONNECT`. Supports optional `user:pass@` basic auth.
 - `--insecure` or `-k`: Disable TLS certificate verification — needed for staging and lab hosts with a self-signed certificate. This genuinely disables verification even when the environment sets `REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE`, which otherwise override it. Without it, a scan of an untrusted-certificate host fails every request and says so, pointing at this flag.
@@ -426,6 +502,18 @@ python headerhawk.py http://example.com --methods GET,POST
 python headerhawk.py http://example.com -H "Authorization: Bearer <token>" -H "Cookie: session=abc"
 ```
 
+#### Scan a Request Saved from a Proxy
+
+```bash
+python headerhawk.py --request order.txt -o report.json
+```
+
+#### Replay a Saved Request Against Staging
+
+```bash
+python headerhawk.py https://staging.example.com/api/v2/orders --request order.txt
+```
+
 #### Confirm Blind SSRF via an OOB Listener
 
 ```bash
@@ -468,7 +556,7 @@ A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are alwa
 ### Sample Output
 
 ```
-HeaderHawk 2.12.0
+HeaderHawk 2.13.0
 GitHub: https://github.com/kabiri-labs/HeaderHawk
 
 Targets: 1

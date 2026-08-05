@@ -5,5 +5,5 @@ importing the package root, which would be circular.
 """
 
 __tool_name__ = "HeaderHawk"
-__version__ = "2.12.0"
+__version__ = "2.13.0"
 __github_url__ = "https://github.com/kabiri-labs/HeaderHawk"

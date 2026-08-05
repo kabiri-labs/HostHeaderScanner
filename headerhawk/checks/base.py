@@ -8,6 +8,7 @@ from tqdm import tqdm
 
 from ..compliance import controls_for
 from ..core.findings import DEFAULT_FINDING_CLASS
+from ..core.request_file import redact_credentials
 from ..core.scope import SCOPE_ENDPOINT
 from ..core.severity import severity_for
 from ..report.repro import build_reproduction
@@ -41,7 +42,7 @@ class BaseTest:
                  methods=None, threads=5, verbose=1, timeout=10,
                  oob_manager=None, wordlist=None, insecure=False,
                  stats=None, quiet=False, rate_limiter=None,
-                 enable_desync=False):
+                 enable_desync=False, request_spec=None):
         self.target_url = target_url
         self.original_host = original_host
         self.session = session
@@ -59,6 +60,10 @@ class BaseTest:
         # Only the desync check acts on this; it is accepted here so the CLI
         # can hand every check the same options.
         self.enable_desync = enable_desync
+        # The saved request a scan was driven from, when there was one.
+        # Its headers already ride on the session; its body has to be
+        # replayed here, or a POST endpoint is tested with an empty one.
+        self.request_spec = request_spec
         self.vulnerabilities_found = []
         self.all_results = []
         # An evidence report must not claim a control passed when the check
@@ -66,6 +71,17 @@ class BaseTest:
         # actually obtained usable data.
         self._requests_ok = 0
         self._skip_reason = None
+
+    def body_for(self, method):
+        """The saved body, when this request is the one the file described.
+
+        Replaying it on a different method would change what is being asked of
+        the endpoint, so it is only sent on the method the file used.
+        """
+        spec = self.request_spec
+        if spec is None or spec.body is None:
+            return None
+        return spec.body if method.upper() == spec.method else None
 
     def request(self, method, url=None, headers=None, allow_redirects=True):
         """Issue a single request, returning the response or None on failure."""
@@ -76,6 +92,7 @@ class BaseTest:
                 method,
                 url or self.target_url,
                 headers=headers,
+                data=self.body_for(method),
                 timeout=self.timeout,
                 allow_redirects=allow_redirects,
             )
@@ -140,7 +157,13 @@ class BaseTest:
         entry.setdefault("severity", severity_for(entry["test_type"]))
         entry.setdefault("controls", list(controls_for(entry["test_type"])))
         entry.setdefault("finding_class", self.finding_class)
-        entry["repro"] = build_reproduction(entry, self.target_url, self.insecure)
+        if entry.get("raw_request"):
+            # The wire request is stored as evidence and reaches every report
+            # format. A credential is never part of the evidence, so it is
+            # taken out here rather than in each writer.
+            entry["raw_request"] = redact_credentials(entry["raw_request"])
+        entry["repro"] = build_reproduction(entry, self.target_url,
+                                            self.insecure, self.request_spec)
         self.vulnerabilities_found.append(entry)
         if self.verbose >= 1:
             self._print_finding(entry)

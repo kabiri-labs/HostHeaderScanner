@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 from .._meta import __tool_name__, __version__
 from ..net.raw import RawHTTPClient
+from ..core.request_file import header_lines
 from ..core.scope import SCOPE_HOST
 from .base import BaseTest
 
@@ -46,12 +47,31 @@ class HostBypassTest(BaseTest):
         return proxies.get("https") or proxies.get("http")
 
     def base_lines(self, host_value):
+        """The header block to send, from the saved request when there was one.
+
+        A bypass tested without the session cookie the real request carried
+        would be probing a different, usually unauthenticated, request.
+        """
+        if self.request_spec is not None:
+            return header_lines(self.request_spec, host_value)
         return [
             f"Host: {host_value}",
             f"User-Agent: Mozilla/5.0 (compatible; {__tool_name__}/{__version__})",
             "Accept: */*",
             "Connection: close",
         ]
+
+    def second_host(self, host_value, extra_host_line):
+        """``base_lines`` with a second Host line right after the first.
+
+        The techniques that send two Host headers differ from the others only
+        in that extra line, so they are built from the same block rather than
+        from a hand-written one - otherwise a scan driven from a request file
+        would send them without the cookie the rest of the scan carries.
+        ``Host`` is always the first line, both here and in ``header_lines``.
+        """
+        lines = self.base_lines(host_value)
+        return [lines[0], extra_host_line] + lines[1:]
 
     def techniques(self, marker):
         host = self.original_host
@@ -60,8 +80,7 @@ class HostBypassTest(BaseTest):
             (
                 "Duplicate Host header",
                 f"GET {self.path} HTTP/1.1",
-                [f"Host: {host}", f"Host: {marker}",
-                 f"User-Agent: {__tool_name__}/{__version__}", "Connection: close"],
+                self.second_host(host, f"Host: {marker}"),
             ),
             (
                 "Absolute-URI request line",
@@ -71,8 +90,7 @@ class HostBypassTest(BaseTest):
             (
                 "Indented (line-folded) Host header",
                 f"GET {self.path} HTTP/1.1",
-                [f"Host: {host}", f" Host: {marker}",
-                 f"User-Agent: {__tool_name__}/{__version__}", "Connection: close"],
+                self.second_host(host, f" Host: {marker}"),
             ),
             (
                 "Host override",
