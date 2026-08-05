@@ -9,6 +9,7 @@ from ..posture import ResponseHeaderPostureTest
 from .auth_bypass import AuthBypassTest
 from .cache_poisoning import CachePoisoningTest
 from .cors import CORSTest
+from .crlf import CRLFInjectionTest
 from .host_bypass import HostBypassTest
 from .host_injection import HostInjectionTest
 from .open_redirect import OpenRedirectTest
@@ -25,6 +26,7 @@ CHECKS = [
     HostBypassTest,
     CachePoisoningTest,
     CORSTest,
+    CRLFInjectionTest,
     AuthBypassTest,
     VhostDiscoveryTest,
     SSRFTest,

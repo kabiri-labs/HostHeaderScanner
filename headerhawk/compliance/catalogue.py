@@ -17,12 +17,19 @@ PCI = "PCI DSS 4.0.1"
 _PCI_URL = ("https://docs-prv.pcisecuritystandards.org/PCI%20DSS/Standard/"
             "PCI-DSS-v4_0_1.pdf")
 _ASVS_CHAPTER = "https://github.com/OWASP/ASVS/blob/master/5.0/en/{file}"
+_V1 = _ASVS_CHAPTER.format(file="0x10-V1-Encoding-and-Sanitization.md")
 _V3 = _ASVS_CHAPTER.format(file="0x12-V3-Web-Frontend-Security.md")
 _V4 = _ASVS_CHAPTER.format(file="0x13-V4-API-and-Web-Service.md")
 _V8 = _ASVS_CHAPTER.format(file="0x17-V8-Authorization.md")
 _V13 = _ASVS_CHAPTER.format(file="0x22-V13-Configuration.md")
 
 _ENTRIES = [
+    Control(
+        "ASVS-5.0:1.2.1", ASVS, "1.2.1",
+        "Output encoding for an HTTP response is relevant for the context "
+        "required, including for HTTP header fields, so that untrusted data "
+        "cannot change the structure of the message.",
+        _V1),
     Control(
         "ASVS-5.0:3.7.2", ASVS, "3.7.2",
         "Redirects to a different hostname are only made to allowlisted "

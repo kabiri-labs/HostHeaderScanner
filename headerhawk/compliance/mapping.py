@@ -22,6 +22,12 @@ CONTROLS_BY_TEST = {
     "URL Parameter SSRF": ("ASVS-5.0:13.2.4", "ASVS-5.0:13.2.5"),
     "Blind SSRF (OOB)": ("ASVS-5.0:13.2.4", "ASVS-5.0:13.2.5"),
     "Open Redirect": ("ASVS-5.0:3.7.2",),
+    # 4.2.4 also forbids CR/LF in header values, but is scoped to HTTP/2
+    # and HTTP/3; these probes exercise HTTP/1.1, so 1.2.1 - encoding
+    # output so untrusted data cannot restructure the message - is the
+    # requirement they actually verify.
+    "CRLF Response Splitting": ("ASVS-5.0:1.2.1",),
+    "CRLF Header Injection": ("ASVS-5.0:1.2.1",),
     "HTTP Request Smuggling (CL.TE)": ("ASVS-5.0:4.2.1", "ASVS-5.0:4.2.2"),
     "HTTP Request Smuggling (TE.CL)": ("ASVS-5.0:4.2.1", "ASVS-5.0:4.2.2"),
     # CORS.

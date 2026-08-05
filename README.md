@@ -1,6 +1,6 @@
-# HeaderHawk v2.7.0
+# HeaderHawk v2.8.0
 
-[![Version](https://img.shields.io/badge/version-2.7.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.8.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
@@ -46,6 +46,7 @@ Each module targets a distinct class of header-driven weakness and the headers/v
 | **Open redirect** | `Host`-driven redirects whose `Location` host matches the injected value |
 | **URL-parameter SSRF** | `url`, `next`, `redirect`, `dest`, `uri`, `path`, … against internal targets, with baseline differencing |
 | **Virtual host discovery** | `Host`-header brute force (built-in or custom wordlist) with two-probe confirmation |
+| **CRLF injection / response splitting** | Percent-encoded, double-encoded and overlong-UTF-8 `CR`/`LF` in URL parameters, the URL path and decoded request headers — confirmed by a response header field named after a unique per-scan marker |
 | **HTTP request smuggling** | `Content-Length` / `Transfer-Encoding` disagreement between front-end and back-end — CL.TE and TE.CL, detected by timing |
 | **CORS origin validation** | `Origin` reflection, `null` origin, prefix / suffix / trailing-dot / subdomain allowlist bypasses and plaintext-origin trust — each confirmed by the server echoing the origin back in `Access-Control-Allow-Origin` |
 | **Response header posture** | `Strict-Transport-Security`, `frame-ancestors` / `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy`, and version banners (`Server`, `X-Powered-By`, …) |
@@ -68,6 +69,7 @@ a report answers *which requirement does this fail?* without a manual crosswalk.
 | CORS misconfiguration | ASVS 5.0 **3.4.2** — `Access-Control-Allow-Origin` is a fixed value or validated against an allowlist |
 | Header change detection | PCI DSS 4.0.1 **11.6.1** — a mechanism alerts on unauthorised modification of security-impacting HTTP headers (satisfied by running `--baseline`) |
 | HTTP request smuggling | ASVS 5.0 **4.2.1**, **4.2.2** — message boundaries determined consistently, `Content-Length` consistent with the body |
+| CRLF injection / response splitting | ASVS 5.0 **1.2.1** — output encoding relevant to the context, including HTTP header fields, so untrusted data cannot change the message structure |
 | Virtual host discovery | ASVS 5.0 **13.4.5** — internal documentation and monitoring endpoints not exposed |
 | Response header posture | ASVS 5.0 **3.4.1** (HSTS), **3.4.3** (CSP), **3.4.4** (nosniff), **3.4.5** (Referrer-Policy), **3.4.6** (frame-ancestors), **3.4.7** (CSP reporting), **3.4.8** (COOP), **13.4.6** (version disclosure) |
 | Cookie attributes | ASVS 5.0 **3.3.1** (Secure + name prefix), **3.3.2** (SameSite), **3.3.3** (`__Host-` prefix), **3.3.4** (HttpOnly on session values), **3.3.5** (size limit) |
@@ -156,6 +158,7 @@ a change is the mechanism working, not the control failing.
 - **Confirmed cache poisoning, not just reflection**: a cache-buster is planted, the poisoning request is sent through an unkeyed header, and the URL is re-requested *without* it; only a surviving marker (served from cache) is reported, with `X-Cache` / `Age` / `CF-Cache-Status` context.
 - **Weighted SSRF scoring**: response-time deviation, internal-target indicators (`root:x:0:0:`, cloud-metadata markers, connection errors) and header anomalies are combined behind a threshold. Header anomalies are measured only against headers proven stable across baseline samples, so per-request identifiers (request ids, tracing, `CF-RAY`, nonces) are learned as volatile and ignored.
 - **Confirmed virtual-host discovery**: the default vhost is sampled repeatedly to learn its natural page-to-page variance; a candidate is reported only when a status, length or title difference is confirmed on a second probe — dynamic content does not masquerade as a hidden host.
+- **Proven CRLF injection**: the injected field is named after a unique per-scan marker, so a response header field carrying it cannot have come from anywhere else — a value merely *echoed* into `Location` is not reported. One hole is reported once, not once per encoding that reaches it.
 - **Request smuggling, detected without smuggling anything**: a probe whose body deliberately disagrees with its own `Content-Length` leaves whichever server loses the disagreement waiting for bytes that never arrive. A hang is only reported after two consecutive probes agree *and* a well-formed request in between still returns normally — which is what separates a desync from a target that merely became slow. Nothing is planted on the connection, so a scan does not tamper with other users' traffic.
 - **Honest about what timing proves**: every smuggling finding carries a `Confirming this` note stating that a delay is evidence rather than proof, what to run for certainty, and what that costs. It is printed to the console and included in every report format.
 - **Proven CORS findings**: a unique per-scan origin that cannot exist is sent as `Origin`; only the server echoing it back counts. Severity follows `Access-Control-Allow-Credentials`, since a permissive allowlist that also allows credentials means an attacker's page can read authenticated responses. A server that reflects *anything* is reported once as reflection rather than five times over as each narrower bypass, and a fixed allowlist — or a bare `*` without credentials, which is correct for a public endpoint — produces nothing.
@@ -369,7 +372,7 @@ A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are alwa
 ### Sample Output
 
 ```
-HeaderHawk 2.7.0
+HeaderHawk 2.8.0
 GitHub: https://github.com/kabiri-labs/HeaderHawk
 
 Targets: 1
