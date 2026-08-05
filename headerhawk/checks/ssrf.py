@@ -7,12 +7,16 @@ import time
 from colorama import Fore
 
 from ..core.output import status
+from ..core.scope import SCOPE_HOST
 from .base import BaseTest
+
 
 class SSRFTest(BaseTest):
     """Time- and content-based SSRF detection via host routing headers."""
 
     test_type = "SSRF"
+    # Host-level: the weakness belongs to the front-end, not to a route.
+    scope = SCOPE_HOST
 
     # Headers that legitimately vary between two identical requests and must
     # never be treated as an SSRF signal. Stored lower-cased for case-insensitive

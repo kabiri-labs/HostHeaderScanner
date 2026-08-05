@@ -18,7 +18,9 @@ from .core.oob import OOBManager, confirm_oob_interactions
 from .core.output import is_quiet, print_summary, resolve_quiet, set_quiet, status
 from .core.ratelimit import RateLimiter
 from .core.session import build_session
+from .core.scope import runs_on
 from .core.stats import RequestStats
+from .discovery import DEFAULT_LIMIT, discover
 from .report.evidence import save_evidence
 from .report.writer import save_results
 
@@ -73,6 +75,17 @@ def parse_arguments():
                              "prefix can attach to another user's request and "
                              "corrupt or misroute live traffic. Without it, "
                              "smuggling is reported from timing alone")
+    parser.add_argument("--discover", action="store_true",
+                        help="Scan the endpoints the target publishes about "
+                             "itself - OpenAPI, sitemap, robots.txt and its own "
+                             "links - instead of only the URL given")
+    parser.add_argument("--max-endpoints", dest="max_endpoints", type=int,
+                        default=DEFAULT_LIMIT,
+                        help=f"Most endpoints to scan when discovering "
+                             f"(default {DEFAULT_LIMIT})")
+    parser.add_argument("--openapi",
+                        help="URL of an OpenAPI/Swagger description to take "
+                             "endpoints from, when it is not at a standard path")
     parser.add_argument("--auth-cookie", dest="auth_cookie",
                         help="Cookies to scan with, as 'a=1; b=2'. Use "
                              "'env:NAME' to read them from an environment "
@@ -125,6 +138,10 @@ def parse_arguments():
         parser.error("Provide a target URL or --list <file>.")
     if args.fail_on_new and not args.baseline:
         parser.error("--fail-on-new needs --baseline <file> to compare against.")
+    if args.max_endpoints < 1:
+        parser.error("The --max-endpoints argument must be 1 or more.")
+    if args.openapi and not args.discover:
+        parser.error("--openapi only applies with --discover.")
     return args
 
 
@@ -152,7 +169,8 @@ def load_targets(args):
     return [args.url]
 
 
-def scan_target(url, args, session, methods, wordlist, stats, rate_limiter=None):
+def scan_target(url, args, session, methods, wordlist, stats,
+                rate_limiter=None, primary=True):
     """Run every test against a single URL and return the test objects.
 
     Returns None for an invalid URL so a batch run can skip it and continue.
@@ -173,7 +191,11 @@ def scan_target(url, args, session, methods, wordlist, stats, rate_limiter=None)
                   oob_manager=oob_manager, wordlist=wordlist, insecure=args.insecure,
                   stats=stats, quiet=is_quiet(), rate_limiter=rate_limiter,
                   enable_desync=args.enable_desync)
-    tests = [check(url, hostname, **common) for check in CHECKS]
+    # Host-level checks run against the requested target only; every other URL
+    # in the scan is another route on the same host, and repeating them there
+    # would issue identical requests and file identical findings.
+    tests = [check(url, hostname, **common)
+             for check in CHECKS if runs_on(check, primary)]
     for test in tests:
         test.run()
     if oob_manager and oob_manager.poll_url:
@@ -276,6 +298,21 @@ def main():
               f"as the product's, so the scan has been stopped.")
         return EXIT_ERROR
 
+    # Discovery runs after authentication on purpose: an anonymous crawl of an
+    # authenticated product discovers its login page and little else.
+    if args.discover:
+        found = discover(session, targets[0], args.timeout,
+                         limit=args.max_endpoints, openapi_url=args.openapi)
+        targets = found.urls
+        origin = ", ".join(found.sources) or "the target URL alone"
+        status(Fore.CYAN + f"Discovered {len(targets)} endpoint(s) from "
+                           f"{origin}.")
+        if found.considered > len(targets):
+            print(Fore.YELLOW +
+                  f"[!] {found.considered} distinct endpoints were found but "
+                  f"only {len(targets)} are being scanned (--max-endpoints). "
+                  f"The rest were not assessed.")
+
     stats = RequestStats()
     rate_limiter = RateLimiter(args.rate)
     all_tests = []
@@ -284,7 +321,8 @@ def main():
             if len(targets) > 1:
                 status(Fore.CYAN + Style.BRIGHT + f"\n===== Scanning {url} =====")
             tests = scan_target(url, args, session, methods, wordlist, stats,
-                                rate_limiter=rate_limiter)
+                                rate_limiter=rate_limiter,
+                                primary=(url == targets[0]))
             if tests:
                 all_tests.extend(tests)
     except KeyboardInterrupt:

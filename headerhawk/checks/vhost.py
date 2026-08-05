@@ -6,6 +6,7 @@ import uuid
 
 from colorama import Fore
 
+from ..core.scope import SCOPE_HOST
 from .base import BaseTest
 from .wordlists import DEFAULT_VHOST_WORDLIST
 
@@ -19,6 +20,8 @@ class VhostDiscoveryTest(BaseTest):
     """
 
     test_type = "Virtual Host Discovery"
+    # Host-level: the weakness belongs to the front-end, not to a route.
+    scope = SCOPE_HOST
 
     @staticmethod
     def _title(text):

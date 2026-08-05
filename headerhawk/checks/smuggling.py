@@ -24,6 +24,7 @@ from colorama import Fore, Style
 
 from ..core.output import status
 from ..net.raw import RawHTTPClient
+from ..core.scope import SCOPE_HOST
 from .base import BaseTest
 
 # Sent with every finding. The scanner should be honest about what a timing
@@ -52,6 +53,8 @@ class RequestSmugglingTest(BaseTest):
     """Probe for a Content-Length / Transfer-Encoding parsing disagreement."""
 
     test_type = "HTTP Request Smuggling"
+    # Host-level: the weakness belongs to the front-end, not to a route.
+    scope = SCOPE_HOST
 
     CL_TE = "HTTP Request Smuggling (CL.TE)"
     TE_CL = "HTTP Request Smuggling (TE.CL)"

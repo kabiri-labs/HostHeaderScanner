@@ -35,6 +35,8 @@ from .core.auth import (FAILED, NOT_CONFIGURED, UNVERIFIED, VERIFIED,
                         AuthConfig, AuthResult, apply_credentials,
                         is_configured, log_in, parse_cookie,
                         parse_form_data, resolve_secret, verify)
+from .core.scope import SCOPE_ENDPOINT, SCOPE_HOST, runs_on
+from .discovery import Discovery, discover, endpoint_shape
 from .core.baseline import (collect_findings, compare, describe_drift,
                             finding_identity, load_baseline)
 from .core.exitcodes import (EXIT_ERROR, EXIT_FINDINGS, EXIT_OK,
@@ -84,6 +86,8 @@ __all__ = [
     "AuthConfig", "AuthResult", "FAILED", "NOT_CONFIGURED", "UNVERIFIED",
     "VERIFIED", "apply_credentials", "is_configured", "log_in",
     "parse_cookie", "parse_form_data", "resolve_secret", "verify",
+    "SCOPE_ENDPOINT", "SCOPE_HOST", "runs_on",
+    "Discovery", "discover", "endpoint_shape",
     "collect_findings", "compare", "describe_drift", "finding_identity",
     "load_baseline",
     "OOBManager", "confirm_oob_interactions",
