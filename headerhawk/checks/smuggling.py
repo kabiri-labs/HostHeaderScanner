@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 from colorama import Fore, Style
 
 from ..core.output import status
+from ..core.request_file import header_lines
 from ..net.raw import RawHTTPClient
 from ..core.scope import SCOPE_HOST
 from .base import BaseTest
@@ -92,6 +93,18 @@ class RequestSmugglingTest(BaseTest):
     # -- request construction ------------------------------------------------
 
     def _headers(self, extra):
+        """The header block, from the saved request when there was one.
+
+        Content-Length and Transfer-Encoding are always the probe's own: they
+        are the disagreement being tested, so a value from the file would
+        describe a different message.
+        """
+        if self.request_spec is not None:
+            base = [line for line in header_lines(self.request_spec,
+                                                  self.connect_host)
+                    if not line.lower().startswith(("content-length:",
+                                                    "transfer-encoding:"))]
+            return base + extra
         return [f"Host: {self.connect_host}",
                 "Content-Type: application/x-www-form-urlencoded",
                 "Connection: close"] + extra

@@ -29,7 +29,7 @@ class _ScriptedSession:
         self._status = status_code
 
     def request(self, method, url=None, headers=None, timeout=None,
-                allow_redirects=True):
+                allow_redirects=True, data=None, **kwargs):
         origin = (headers or {}).get("Origin")
         self.origins.append(origin)
         return FakeResponse(status_code=self._status,

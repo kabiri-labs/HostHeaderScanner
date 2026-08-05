@@ -26,7 +26,7 @@ class _ScriptedSession:
         self._splits = splits
 
     def request(self, method, url=None, headers=None, timeout=None,
-                allow_redirects=True):
+                allow_redirects=True, data=None, **kwargs):
         self.calls.append({"url": url, "headers": headers or {}})
         extra = self._splits(url or "", headers or {}) or {}
         return FakeResponse(status_code=302 if extra else 200,

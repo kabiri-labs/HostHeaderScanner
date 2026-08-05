@@ -43,12 +43,13 @@ class FakeSession:
         self._responses = list(responses or [])
 
     def request(self, method, url=None, headers=None, timeout=None,
-                allow_redirects=True):
+                allow_redirects=True, data=None, **kwargs):
         self.calls.append({
             "method": method,
             "url": url,
             "headers": headers or {},
             "allow_redirects": allow_redirects,
+            "data": data,
         })
         if not self._responses:
             raise AssertionError("FakeSession received an unexpected request")
