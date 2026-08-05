@@ -30,6 +30,8 @@ from .compliance import (CONTROLS, CONTROLS_BY_TEST, STATUS_FAIL,
                          ControlResult, build_evidence,
                          controls_covered_by, controls_for, describe,
                          summarise, unmapped_findings)
+from .core.baseline import (collect_findings, compare, describe_drift,
+                            finding_identity, load_baseline)
 from .core.exitcodes import (EXIT_ERROR, EXIT_FINDINGS, EXIT_OK,
                              determine_exit_code)
 from .core.findings import (CLASS_POSTURE, CLASS_VULNERABILITY,
@@ -74,6 +76,8 @@ __all__ = [
     "summarise", "unmapped_findings",
     "save_evidence", "render_markdown", "render_json",
     "EXIT_ERROR", "EXIT_FINDINGS", "EXIT_OK", "determine_exit_code",
+    "collect_findings", "compare", "describe_drift", "finding_identity",
+    "load_baseline",
     "OOBManager", "confirm_oob_interactions",
     "is_quiet", "print_summary", "resolve_quiet", "set_quiet", "status",
     "RateLimiter", "build_session", "RequestStats",

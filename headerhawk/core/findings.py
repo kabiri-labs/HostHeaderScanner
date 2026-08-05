@@ -41,8 +41,13 @@ def count_by_class(tests):
     return counts
 
 
-def gated_finding_count(tests, fail_on=DEFAULT_FAIL_ON):
+def gated_finding_count(tests, fail_on=DEFAULT_FAIL_ON, only_identities=None,
+                        identity_of=None):
     """Count only the findings the chosen --fail-on setting should gate on.
+
+    ``only_identities`` narrows that further to a specific set - used by
+    --fail-on-new to gate on regressions against a baseline rather than on the
+    findings a team has already accepted.
 
     An unrecognised setting counts nothing rather than everything: failing a
     build on a typo would be the worse of the two mistakes.
@@ -50,7 +55,13 @@ def gated_finding_count(tests, fail_on=DEFAULT_FAIL_ON):
     wanted = FAIL_ON_CLASSES.get(fail_on, frozenset())
     if not wanted:
         return 0
-    return sum(1
-               for test in tests
-               for finding in test.vulnerabilities_found
-               if finding_class_of(finding) in wanted)
+    counted = 0
+    for test in tests:
+        for finding in test.vulnerabilities_found:
+            if finding_class_of(finding) not in wanted:
+                continue
+            if only_identities is not None:
+                if identity_of is None or identity_of(finding) not in only_identities:
+                    continue
+            counted += 1
+    return counted

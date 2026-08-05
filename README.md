@@ -1,6 +1,6 @@
-# HeaderHawk v2.6.0
+# HeaderHawk v2.7.0
 
-[![Version](https://img.shields.io/badge/version-2.6.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.7.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
@@ -66,6 +66,7 @@ a report answers *which requirement does this fail?* without a manual crosswalk.
 | SSRF, URL-parameter SSRF, blind SSRF | ASVS 5.0 **13.2.4**, **13.2.5** — allowlist of systems the application and server may call |
 | Open redirect | ASVS 5.0 **3.7.2** — redirects to another hostname only to allowlisted destinations |
 | CORS misconfiguration | ASVS 5.0 **3.4.2** — `Access-Control-Allow-Origin` is a fixed value or validated against an allowlist |
+| Header change detection | PCI DSS 4.0.1 **11.6.1** — a mechanism alerts on unauthorised modification of security-impacting HTTP headers (satisfied by running `--baseline`) |
 | HTTP request smuggling | ASVS 5.0 **4.2.1**, **4.2.2** — message boundaries determined consistently, `Content-Length` consistent with the body |
 | Virtual host discovery | ASVS 5.0 **13.4.5** — internal documentation and monitoring endpoints not exposed |
 | Response header posture | ASVS 5.0 **3.4.1** (HSTS), **3.4.3** (CSP), **3.4.4** (nosniff), **3.4.5** (Referrer-Policy), **3.4.6** (frame-ancestors), **3.4.7** (CSP reporting), **3.4.8** (COOP), **13.4.6** (version disclosure) |
@@ -115,6 +116,30 @@ could not judge is listed as *not assessed*, with the reason:
 Findings whose type maps to no catalogued requirement are listed at the end
 rather than dropped, so nothing the scan found is left out of the report just
 because there is no requirement to hang it on.
+
+### Tracking change over time
+
+```bash
+python headerhawk.py https://example.com -o baseline.json          # accept today's state
+python headerhawk.py https://example.com --baseline baseline.json \
+       --fail-on any --fail-on-new                                  # fail only on regressions
+```
+
+`--baseline` compares against a previous scan and reports `N new, N fixed, N
+unchanged`. `--fail-on-new` narrows the exit-code gate to the new ones, so a team
+that has accepted its current findings gets a pipeline that fails on a
+*regression* instead of failing forever.
+
+A finding keeps the same identity between scans even though several checks put a
+fresh random marker in every payload — marker-shaped tokens are folded out before
+matching. Without that, every finding would look new on every run, the pipeline
+would fail permanently, and the feature would be switched off.
+
+Running the comparison is also what satisfies **PCI DSS 4.0.1 requirement
+11.6.1**, which asks for a mechanism that detects unauthorised modification of
+security-impacting HTTP headers. The evidence report marks 11.6.1 as assessed
+when a baseline was supplied, and as *not assessed* when one was not — detecting
+a change is the mechanism working, not the control failing.
 
 ---
 
@@ -212,6 +237,8 @@ python headerhawk.py http://example.com
 - `--enable-desync`: Confirm a suspected request-smuggling desync by planting a smuggled prefix and checking whether a following request comes back affected. **Intrusive** — see the warning below. Off by default; without it, smuggling is reported from timing alone.
 - `--fail-on <vuln|posture|any|none>`: Which findings make the process exit `1`. Default `vuln` — only proven vulnerabilities. `posture` counts missing response-header controls, `any` counts both, `none` never fails on findings (report-only runs).
 - `--quiet` or `-q`: Suppress progress bars, colours and status chatter (only findings and the final summary are printed). Auto-enabled when stdout is not a TTY, so piped/CI logs stay clean.
+- `--baseline <file>`: A previous scan's JSON output. Findings are compared against it and reported as new, fixed or unchanged.
+- `--fail-on-new`: Gate the exit code on findings that are **not** in `--baseline`, so a pipeline fails on a regression rather than on findings the team has already accepted. Requires `--baseline`.
 - `--evidence <file>`: Write a per-control compliance evidence report (`.md` or `.json`) — every catalogued requirement reported as Pass, Fail or Not assessed, with its evidence or the reason it could not be judged. See [Compliance Evidence](#compliance-evidence).
 - `--output <file>` or `-o <file>`: Save results to a file. The format is chosen by extension: `.json`, `.sarif` (SARIF 2.1.0 for GitHub code scanning / security dashboards) or `.md`.
 
@@ -342,7 +369,7 @@ A `Requests: <ok>/<total> succeeded` line and a `Targets scanned` count are alwa
 ### Sample Output
 
 ```
-HeaderHawk 2.6.0
+HeaderHawk 2.7.0
 GitHub: https://github.com/kabiri-labs/HeaderHawk
 
 Targets: 1

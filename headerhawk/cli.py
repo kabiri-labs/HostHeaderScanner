@@ -8,6 +8,8 @@ from colorama import Fore, Style, init
 
 from ._meta import __github_url__, __tool_name__, __version__
 from .checks.registry import CHECKS
+from .core.baseline import (collect_findings, compare, finding_identity,
+                            load_baseline)
 from .core.exitcodes import EXIT_ERROR, determine_exit_code
 from .core.findings import DEFAULT_FAIL_ON, FAIL_ON_CLASSES, gated_finding_count
 from .core.oob import OOBManager, confirm_oob_interactions
@@ -69,6 +71,14 @@ def parse_arguments():
                              "prefix can attach to another user's request and "
                              "corrupt or misroute live traffic. Without it, "
                              "smuggling is reported from timing alone")
+    parser.add_argument("--baseline",
+                        help="A previous scan's JSON output. Findings are "
+                             "compared against it and reported as new, fixed or "
+                             "unchanged")
+    parser.add_argument("--fail-on-new", dest="fail_on_new", action="store_true",
+                        help="Gate the exit code on findings that are not in "
+                             "--baseline, so a pipeline fails on a regression "
+                             "rather than on findings already accepted")
     parser.add_argument("--fail-on", dest="fail_on",
                         choices=sorted(FAIL_ON_CLASSES), default=DEFAULT_FAIL_ON,
                         help="Which findings make the process exit 1: "
@@ -89,6 +99,8 @@ def parse_arguments():
         parser.error("The --rate argument must be 0 (unlimited) or positive.")
     if not args.url and not args.list:
         parser.error("Provide a target URL or --list <file>.")
+    if args.fail_on_new and not args.baseline:
+        parser.error("--fail-on-new needs --baseline <file> to compare against.")
     return args
 
 
@@ -146,6 +158,23 @@ def scan_target(url, args, session, methods, wordlist, stats, rate_limiter=None)
     return tests
 
 
+def resolve_drift(args, all_tests):
+    """Compare against the baseline, or return None when there is nothing to do.
+
+    A baseline that cannot be read is reported rather than treated as empty: an
+    empty baseline would make every current finding look new, which is exactly
+    the wrong answer for a flag whose job is to spot regressions.
+    """
+    if not args.baseline:
+        return None
+    baseline = load_baseline(args.baseline)
+    if baseline is None:
+        print(Fore.YELLOW + f"Could not read baseline '{args.baseline}'; "
+                            "skipping the comparison.")
+        return None
+    return compare(collect_findings(all_tests), baseline)
+
+
 def main():
     args = parse_arguments()
 
@@ -192,17 +221,24 @@ def main():
         print(Fore.YELLOW + "\n[!] Program interrupted by user.")
         save_results(args.output, all_tests, args.verbose)
         save_evidence(args.evidence, all_tests, targets, stats=stats,
-                      version=__version__, tool_name=__tool_name__)
+                      version=__version__, tool_name=__tool_name__,
+                      drift=resolve_drift(args, all_tests))
         sys.exit(EXIT_ERROR)
 
     if not all_tests:
         print(Fore.RED + "No valid targets were scanned.")
         return EXIT_ERROR
 
+    drift = resolve_drift(args, all_tests)
     save_results(args.output, all_tests, args.verbose)
     save_evidence(args.evidence, all_tests, targets, stats=stats,
-                  version=__version__, tool_name=__tool_name__)
-    print_summary(all_tests, targets, stats)
+                  version=__version__, tool_name=__tool_name__, drift=drift)
+    print_summary(all_tests, targets, stats, drift=drift)
     # The exit code gates on the classes the caller asked for, so adding posture
     # checks does not turn an existing pipeline red on its own.
-    return determine_exit_code(gated_finding_count(all_tests, args.fail_on), stats)
+    gated = gated_finding_count(
+        all_tests, args.fail_on,
+        only_identities=(drift["new_identities"]
+                         if drift is not None and args.fail_on_new else None),
+        identity_of=finding_identity)
+    return determine_exit_code(gated, stats)
